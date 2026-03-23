@@ -451,6 +451,8 @@ pub enum ConfigCommands {
     },
     /// Validate configured credentials
     Check,
+    /// Step-by-step setup guide for X API and xAI keys
+    Guide,
 }
 
 #[derive(Subcommand)]

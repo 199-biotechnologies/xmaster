@@ -331,9 +331,20 @@ impl XApi {
 
         if status == 401 || status == 403 {
             let text = resp.text().await.unwrap_or_default();
+            let message = if text.contains("oauth1-permissions") {
+                format!(
+                    "HTTP {status} Forbidden: {text}. \
+                    Fix: Your Access Token was likely generated before enabling Read+Write. \
+                    Go to developer.x.com → your app → Keys and tokens → Regenerate Access Token and Secret, \
+                    then run: xmaster config set keys.access_token NEW_TOKEN && \
+                    xmaster config set keys.access_token_secret NEW_SECRET"
+                )
+            } else {
+                format!("HTTP {status}: {text}")
+            };
             return Err(XmasterError::AuthMissing {
                 provider: "x",
-                message: format!("HTTP {status}: {text}"),
+                message,
             });
         }
 

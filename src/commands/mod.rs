@@ -73,6 +73,7 @@ pub async fn dispatch(
             ConfigCommands::Show => config_cmd::show(ctx, format).await,
             ConfigCommands::Set { key, value } => config_cmd::set(format, key, value).await,
             ConfigCommands::Check => config_cmd::check(ctx, format).await,
+            ConfigCommands::Guide => { config_cmd::guide(format).await }
         },
         Commands::AgentInfo => {
             agent_info::execute(format);

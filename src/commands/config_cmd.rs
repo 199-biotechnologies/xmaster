@@ -201,3 +201,100 @@ pub async fn check(ctx: Arc<AppContext>, format: OutputFormat) -> Result<(), Xma
     output::render(format, &display, None);
     Ok(())
 }
+
+#[derive(Serialize)]
+struct SetupGuide {
+    steps: Vec<SetupStep>,
+    note: String,
+}
+
+#[derive(Serialize)]
+struct SetupStep {
+    step: u32,
+    title: String,
+    instructions: String,
+    url: Option<String>,
+    command: Option<String>,
+}
+
+impl Tableable for SetupGuide {
+    fn to_table(&self) -> comfy_table::Table {
+        let mut table = comfy_table::Table::new();
+        table.set_header(vec!["Step", "What to do"]);
+        for s in &self.steps {
+            let mut detail = s.instructions.clone();
+            if let Some(ref url) = s.url {
+                detail.push_str(&format!("\n  URL: {url}"));
+            }
+            if let Some(ref cmd) = s.command {
+                detail.push_str(&format!("\n  Run: {cmd}"));
+            }
+            table.add_row(vec![
+                format!("{}. {}", s.step, s.title),
+                detail,
+            ]);
+        }
+        table.add_row(vec!["Note".into(), self.note.clone()]);
+        table
+    }
+}
+
+pub async fn guide(format: OutputFormat) -> Result<(), XmasterError> {
+    let guide = SetupGuide {
+        steps: vec![
+            SetupStep {
+                step: 1,
+                title: "Create X Developer Account".into(),
+                instructions: "Go to the X Developer Portal. Sign in with your X account. Accept the Developer Agreement (describe your use case as: 'Personal AI assistant for posting and managing my X account').".into(),
+                url: Some("https://developer.x.com/en/portal/petition/essential/basic-info".into()),
+                command: None,
+            },
+            SetupStep {
+                step: 2,
+                title: "Create a Project and App".into(),
+                instructions: "In the Developer Portal dashboard, create a new Project. Inside it, create an App. Name it whatever you like (e.g., 'xmaster').".into(),
+                url: Some("https://developer.x.com/en/portal/dashboard".into()),
+                command: None,
+            },
+            SetupStep {
+                step: 3,
+                title: "Set App Permissions to Read+Write+DM".into(),
+                instructions: "Go to your App -> Settings -> User authentication settings. Set App permissions to 'Read and write and Direct message'. Set Type of App to 'Native App'. Set Callback URL to http://localhost:3000/callback. Set Website URL to https://github.com/199-biotechnologies/xmaster. Save.".into(),
+                url: None,
+                command: None,
+            },
+            SetupStep {
+                step: 4,
+                title: "Generate Keys and Tokens".into(),
+                instructions: "Go to your App -> Keys and tokens tab. Copy: API Key (Consumer Key), API Secret (Consumer Secret). Then under 'Access Token and Secret', click Generate. IMPORTANT: Generate tokens AFTER setting permissions in Step 3, or they'll be read-only.".into(),
+                url: None,
+                command: None,
+            },
+            SetupStep {
+                step: 5,
+                title: "Configure xmaster with your keys".into(),
+                instructions: "Run these commands with your actual keys:".into(),
+                url: None,
+                command: Some("xmaster config set keys.api_key YOUR_API_KEY\nxmaster config set keys.api_secret YOUR_API_SECRET\nxmaster config set keys.access_token YOUR_ACCESS_TOKEN\nxmaster config set keys.access_token_secret YOUR_ACCESS_TOKEN_SECRET".into()),
+            },
+            SetupStep {
+                step: 6,
+                title: "Verify everything works".into(),
+                instructions: "This should show your X username:".into(),
+                url: None,
+                command: Some("xmaster config check".into()),
+            },
+            SetupStep {
+                step: 7,
+                title: "(Optional) Add xAI key for AI-powered search".into(),
+                instructions: "Get an API key from the xAI console. This enables 'xmaster search-ai' which uses Grok for smarter, cheaper search.".into(),
+                url: Some("https://console.x.ai/".into()),
+                command: Some("xmaster config set keys.xai YOUR_XAI_KEY".into()),
+            },
+        ],
+        note: "If posting fails with 403 'oauth1-permissions', your Access Token was generated before enabling Read+Write. Go back to Keys and tokens, click Regenerate on Access Token, and update xmaster with the new values.".into(),
+    };
+
+    output::render(format, &guide, None);
+    Ok(())
+}

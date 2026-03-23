@@ -172,7 +172,8 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
         score -= 15;
     }
 
-    if features.char_count < 50 && !features.has_media {
+    if features.char_count < 50 && !features.has_media && !features.has_question {
+        // Short questions are fine — they drive replies (27x weight)
         issues.push(Issue {
             severity: Severity::Warning,
             code: "too_short".into(),
@@ -227,8 +228,12 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
     if features.has_numbers {
         score += 10;
     }
-    if features.has_question && goal == Some("replies") {
-        score += 10;
+    if features.has_question {
+        // Questions always help (27x weight in algorithm)
+        score += 5;
+        if goal == Some("replies") {
+            score += 10; // Extra boost when replies is the explicit goal
+        }
     }
     if features.char_count > 0 && features.char_count < 200 {
         score += 5;

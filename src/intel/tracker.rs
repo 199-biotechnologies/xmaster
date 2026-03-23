@@ -119,6 +119,43 @@ impl PostTracker {
         let db_path: PathBuf = dir.join("xmaster.db");
         let conn = Connection::open(db_path)
             .map_err(|e| XmasterError::Config(format!("DB open error: {e}")))?;
+
+        // Ensure required tables exist (safe on fresh install)
+        conn.execute_batch(
+            "CREATE TABLE IF NOT EXISTS posts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tweet_id TEXT UNIQUE NOT NULL,
+                text TEXT NOT NULL,
+                content_type TEXT NOT NULL DEFAULT 'text',
+                char_count INTEGER NOT NULL DEFAULT 0,
+                has_link INTEGER NOT NULL DEFAULT 0,
+                has_media INTEGER NOT NULL DEFAULT 0,
+                has_poll INTEGER NOT NULL DEFAULT 0,
+                hashtag_count INTEGER NOT NULL DEFAULT 0,
+                hook_text TEXT,
+                posted_at TEXT NOT NULL,
+                day_of_week INTEGER NOT NULL DEFAULT 0,
+                hour_of_day INTEGER NOT NULL DEFAULT 0,
+                reply_to_id TEXT,
+                quote_of_id TEXT,
+                preflight_score REAL
+            );
+            CREATE TABLE IF NOT EXISTS metric_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                tweet_id TEXT NOT NULL,
+                snapshot_at TEXT NOT NULL,
+                minutes_since_post INTEGER NOT NULL DEFAULT 0,
+                likes INTEGER NOT NULL DEFAULT 0,
+                retweets INTEGER NOT NULL DEFAULT 0,
+                replies INTEGER NOT NULL DEFAULT 0,
+                impressions INTEGER NOT NULL DEFAULT 0,
+                bookmarks INTEGER NOT NULL DEFAULT 0,
+                quotes INTEGER NOT NULL DEFAULT 0,
+                profile_clicks INTEGER NOT NULL DEFAULT 0
+            );",
+        )
+        .map_err(|e| XmasterError::Config(format!("DB init error: {e}")))?;
+
         Ok(Self { conn })
     }
 
