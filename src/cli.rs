@@ -166,11 +166,10 @@ pub enum Commands {
     /// Get authenticated user info
     Me,
 
-    /// List bookmarks
+    /// Manage bookmarks (sync, search, export, digest)
     Bookmarks {
-        /// Number of bookmarks
-        #[arg(long, short, default_value = "10")]
-        count: usize,
+        #[command(subcommand)]
+        action: BookmarkCommands,
     },
 
     /// List followers
@@ -452,6 +451,46 @@ pub enum ConfigCommands {
     },
     /// Validate configured credentials
     Check,
+}
+
+#[derive(Subcommand)]
+pub enum BookmarkCommands {
+    /// List recent bookmarks
+    List {
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+        /// Show only unread
+        #[arg(long)]
+        unread: bool,
+    },
+    /// Sync bookmarks from X to local database (preserves deleted tweets)
+    Sync {
+        /// Number of bookmarks to fetch from X
+        #[arg(long, short, default_value = "100")]
+        count: usize,
+    },
+    /// Search saved bookmarks locally
+    Search {
+        /// Search query
+        query: String,
+    },
+    /// Export bookmarks as markdown
+    Export {
+        /// Output file path
+        #[arg(long, short)]
+        output: Option<String>,
+        /// Only export unread
+        #[arg(long)]
+        unread: bool,
+    },
+    /// Get bookmark digest (summary of recent saves)
+    Digest {
+        /// Number of days to cover
+        #[arg(long, short, default_value = "7")]
+        days: u32,
+    },
+    /// Show bookmark statistics
+    Stats,
 }
 
 /// Parse a tweet ID from a URL or raw ID string

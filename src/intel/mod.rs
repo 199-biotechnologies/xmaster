@@ -1,3 +1,4 @@
+pub mod bookmarks;
 pub mod store;
 pub mod preflight;
 pub mod scheduler;

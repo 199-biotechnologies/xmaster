@@ -19,8 +19,9 @@ pub mod track;
 pub mod report;
 pub mod suggest;
 pub mod schedule;
+pub mod bookmarks_cmd;
 
-use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, ListCommands, TrackCommands, ReportCommands, SuggestCommands, ScheduleCommands};
+use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, ListCommands, TrackCommands, ReportCommands, SuggestCommands, ScheduleCommands, BookmarkCommands};
 use crate::context::AppContext;
 use crate::errors::XmasterError;
 use crate::output::OutputFormat;
@@ -58,7 +59,14 @@ pub async fn dispatch(
         Commands::Trending { region, category } => search_ai::trending(ctx, format, region.as_deref(), category.as_deref()).await,
         Commands::User { username } => user::info(ctx, format, username).await,
         Commands::Me => user::me(ctx, format).await,
-        Commands::Bookmarks { count } => timeline::bookmarks(ctx, format, *count).await,
+        Commands::Bookmarks { action } => match action {
+            BookmarkCommands::List { count, unread } => bookmarks_cmd::list(ctx, format, *count, *unread).await,
+            BookmarkCommands::Sync { count } => bookmarks_cmd::sync(ctx, format, *count).await,
+            BookmarkCommands::Search { query } => bookmarks_cmd::search(format, query).await,
+            BookmarkCommands::Export { output, unread } => bookmarks_cmd::export(format, output.as_deref(), *unread).await,
+            BookmarkCommands::Digest { days } => bookmarks_cmd::digest(format, *days).await,
+            BookmarkCommands::Stats => bookmarks_cmd::stats(format).await,
+        },
         Commands::Followers { username, count } => social::followers(ctx, format, username, *count).await,
         Commands::Following { username, count } => social::following(ctx, format, username, *count).await,
         Commands::Config { action } => match action {

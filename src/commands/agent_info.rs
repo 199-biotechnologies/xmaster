@@ -66,7 +66,9 @@ pub fn execute(format: OutputFormat) {
             "follow".into(), "unfollow".into(), "dm send".into(), "dm inbox".into(),
             "dm thread".into(), "timeline".into(), "mentions".into(), "search".into(),
             "search-ai".into(), "trending".into(), "user".into(), "me".into(),
-            "bookmarks".into(), "followers".into(), "following".into(),
+            "bookmarks list".into(), "bookmarks sync".into(), "bookmarks search".into(),
+            "bookmarks export".into(), "bookmarks digest".into(), "bookmarks stats".into(),
+            "followers".into(), "following".into(),
             "thread".into(), "metrics".into(), "lists".into(),
             "hide-reply".into(), "unhide-reply".into(), "block".into(), "unblock".into(),
             "mute".into(), "unmute".into(), "rate-limits".into(),
@@ -85,6 +87,7 @@ pub fn execute(format: OutputFormat) {
             "moderation".into(), "analytics".into(), "preflight_scoring".into(),
             "performance_tracking".into(), "timing_intelligence".into(),
             "scheduling".into(),
+            "bookmark_intelligence".into(),
             "self_update".into(),
         ],
         env_prefix: "XMASTER_".into(),
@@ -120,6 +123,7 @@ pub fn execute(format: OutputFormat) {
             "Post threads for maximum growth — they get bookmarked and shared heavily".into(),
             "Check 'xmaster report weekly' to learn what's working".into(),
             "Use 'xmaster schedule add --at auto' to schedule posts at your historically best time".into(),
+            "Run 'xmaster bookmarks sync' regularly to archive bookmarks — local copies survive tweet deletion".into(),
         ],
     };
     output::render(format, &info, None);

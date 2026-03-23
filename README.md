@@ -109,9 +109,21 @@ xmaster post "Hello from xmaster"
 |---------|-------------|---------|
 | `timeline` | View home or user timeline | `xmaster timeline --user elonmusk` |
 | `mentions` | View your mentions | `xmaster mentions -c 20` |
-| `bookmarks` | List your bookmarks | `xmaster bookmarks -c 20` |
 | `user` | Get user profile info | `xmaster user elonmusk` |
 | `me` | Get your own profile info | `xmaster me` |
+
+### Bookmark Intelligence
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `bookmarks list` | List recent bookmarks | `xmaster bookmarks list -c 20` |
+| `bookmarks sync` | Archive bookmarks locally (survives tweet deletion) | `xmaster bookmarks sync -c 200` |
+| `bookmarks search` | Search archived bookmarks | `xmaster bookmarks search "longevity"` |
+| `bookmarks export` | Export as markdown | `xmaster bookmarks export -o bookmarks.md` |
+| `bookmarks digest` | Weekly bookmark summary | `xmaster bookmarks digest -d 7` |
+| `bookmarks stats` | Bookmark statistics | `xmaster bookmarks stats` |
+
+The `sync` command archives bookmark content locally in SQLite. Even if the original tweet gets deleted, your local copy survives. Local search is instant, and the digest helps you actually read what you save. Sync regularly to keep your archive fresh.
 
 ### Search
 
