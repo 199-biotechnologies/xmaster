@@ -1,0 +1,899 @@
+use crate::context::AppContext;
+use crate::errors::XmasterError;
+use base64::Engine as _;
+use reqwest::Method;
+use reqwest_oauth1::OAuthClientProvider;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::path::Path;
+use std::sync::Arc;
+use tokio::sync::OnceCell;
+
+const BASE: &str = "https://api.x.com/2";
+const UPLOAD_URL: &str = "https://upload.twitter.com/1.1/media/upload.json";
+
+// ---------------------------------------------------------------------------
+// Response / data types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TweetResponse {
+    pub id: String,
+    pub text: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TweetData {
+    pub id: String,
+    pub text: String,
+    #[serde(default)]
+    pub author_id: Option<String>,
+    #[serde(default)]
+    pub author_username: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+    #[serde(default)]
+    pub public_metrics: Option<TweetMetrics>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TweetMetrics {
+    #[serde(default)]
+    pub like_count: u64,
+    #[serde(default)]
+    pub retweet_count: u64,
+    #[serde(default)]
+    pub reply_count: u64,
+    #[serde(default)]
+    pub impression_count: u64,
+    #[serde(default)]
+    pub bookmark_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserResponse {
+    pub id: String,
+    pub name: String,
+    pub username: String,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub public_metrics: Option<UserMetrics>,
+    #[serde(default)]
+    pub profile_image_url: Option<String>,
+    #[serde(default)]
+    pub verified: Option<bool>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+pub type UserData = UserResponse;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserMetrics {
+    #[serde(default)]
+    pub followers_count: u64,
+    #[serde(default)]
+    pub following_count: u64,
+    #[serde(default)]
+    pub tweet_count: u64,
+    #[serde(default)]
+    pub listed_count: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmConversation {
+    pub id: String,
+    #[serde(default)]
+    pub participant_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DmMessage {
+    pub id: String,
+    #[serde(default)]
+    pub text: Option<String>,
+    #[serde(default)]
+    pub sender_id: Option<String>,
+    #[serde(default)]
+    pub created_at: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
+// Internal API envelope types
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize)]
+struct ApiResponse<T> {
+    data: Option<T>,
+    #[serde(default)]
+    includes: Option<Value>,
+    #[serde(default)]
+    errors: Option<Vec<ApiErrorDetail>>,
+}
+
+#[derive(Deserialize)]
+struct ApiErrorDetail {
+    #[serde(default)]
+    message: String,
+    #[serde(default)]
+    detail: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MediaUploadResponse {
+    media_id_string: Option<String>,
+    media_id: Option<u64>,
+}
+
+// ---------------------------------------------------------------------------
+// XApi client
+// ---------------------------------------------------------------------------
+
+pub struct XApi {
+    ctx: Arc<AppContext>,
+    cached_user_id: OnceCell<String>,
+}
+
+impl XApi {
+    pub fn new(ctx: Arc<AppContext>) -> Self {
+        Self {
+            ctx,
+            cached_user_id: OnceCell::new(),
+        }
+    }
+
+    // -- OAuth helpers ------------------------------------------------------
+
+    fn secrets(&self) -> reqwest_oauth1::Secrets<'_> {
+        let k = &self.ctx.config.keys;
+        reqwest_oauth1::Secrets::new(&k.api_key, &k.api_secret)
+            .token(&k.access_token, &k.access_token_secret)
+    }
+
+    fn require_auth(&self) -> Result<(), XmasterError> {
+        if !self.ctx.config.has_x_auth() {
+            return Err(XmasterError::AuthMissing {
+                provider: "x",
+                message: "X API credentials not configured".into(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Low-level signed request. Returns the parsed JSON `Value`.
+    async fn request(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<Value>,
+    ) -> Result<Value, XmasterError> {
+        self.require_auth()?;
+
+        // reqwest::Client::clone is cheap (Arc bump). We must create fresh
+        // secrets per call because oauth1() consumes both client and secrets.
+        let resp = match method {
+            Method::GET => {
+                self.ctx.client.clone().oauth1(self.secrets())
+                    .get(url)
+                    .send().await?
+            }
+            Method::POST => {
+                let mut b = self.ctx.client.clone().oauth1(self.secrets()).post(url);
+                if let Some(ref json) = body {
+                    b = b.header("Content-Type", "application/json")
+                        .body(serde_json::to_string(json)?);
+                }
+                b.send().await?
+            }
+            Method::DELETE => {
+                self.ctx.client.clone().oauth1(self.secrets())
+                    .delete(url)
+                    .send().await?
+            }
+            Method::PUT => {
+                let mut b = self.ctx.client.clone().oauth1(self.secrets()).put(url);
+                if let Some(ref json) = body {
+                    b = b.header("Content-Type", "application/json")
+                        .body(serde_json::to_string(json)?);
+                }
+                b.send().await?
+            }
+            _ => {
+                return Err(XmasterError::Api {
+                    provider: "x",
+                    code: "unsupported_method",
+                    message: format!("Unsupported HTTP method: {method}"),
+                });
+            }
+        };
+
+        let status = resp.status();
+
+        if status == 401 || status == 403 {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(XmasterError::AuthMissing {
+                provider: "x",
+                message: format!("HTTP {status}: {text}"),
+            });
+        }
+        if status == 429 {
+            return Err(XmasterError::RateLimited { provider: "x" });
+        }
+
+        let text = resp.text().await?;
+
+        if text.is_empty() {
+            // Some endpoints (DELETE, engagement) return 200/204 with empty body
+            return Ok(Value::Null);
+        }
+
+        let val: Value = serde_json::from_str(&text).map_err(|_| XmasterError::Api {
+            provider: "x",
+            code: "json_parse",
+            message: format!("Failed to parse response: {}", &text[..text.len().min(200)]),
+        })?;
+
+        if !status.is_success() {
+            let msg = val["detail"]
+                .as_str()
+                .or_else(|| val["title"].as_str())
+                .unwrap_or("Unknown error");
+            return Err(XmasterError::Api {
+                provider: "x",
+                code: "api_error",
+                message: format!("HTTP {status}: {msg}"),
+            });
+        }
+
+        Ok(val)
+    }
+
+    /// Extract `data` field from an API response, returning a deserialized `T`.
+    async fn request_data<T: serde::de::DeserializeOwned>(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<Value>,
+    ) -> Result<T, XmasterError> {
+        let val = self.request(method, url, body).await?;
+        let envelope: ApiResponse<T> = serde_json::from_value(val.clone())?;
+
+        if let Some(errors) = &envelope.errors {
+            if envelope.data.is_none() {
+                let msg = errors
+                    .iter()
+                    .map(|e| e.detail.as_deref().unwrap_or(&e.message))
+                    .collect::<Vec<_>>()
+                    .join("; ");
+                return Err(XmasterError::Api {
+                    provider: "x",
+                    code: "api_error",
+                    message: msg,
+                });
+            }
+        }
+
+        envelope.data.ok_or_else(|| XmasterError::Api {
+            provider: "x",
+            code: "no_data",
+            message: "Response contained no data field".into(),
+        })
+    }
+
+    /// Extract `data` as a `Vec<T>`, returning empty vec when data is absent.
+    async fn request_list<T: serde::de::DeserializeOwned>(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<Value>,
+    ) -> Result<(Vec<T>, Option<Value>), XmasterError> {
+        let val = self.request(method, url, body).await?;
+
+        // Grab includes before consuming val
+        let includes = val.get("includes").cloned();
+
+        let envelope: ApiResponse<Vec<T>> = serde_json::from_value(val)?;
+        Ok((envelope.data.unwrap_or_default(), includes))
+    }
+
+    // -- Cached user ID -----------------------------------------------------
+
+    pub async fn get_authenticated_user_id(&self) -> Result<String, XmasterError> {
+        self.cached_user_id
+            .get_or_try_init(|| async {
+                let user: UserResponse = self.request_data(
+                    Method::GET,
+                    &format!("{BASE}/users/me?user.fields=id"),
+                    None,
+                ).await?;
+                Ok(user.id)
+            })
+            .await
+            .cloned()
+    }
+
+    // -- Tweet fields query string helpers ----------------------------------
+
+    fn tweet_fields() -> &'static str {
+        "tweet.fields=created_at,public_metrics,author_id,conversation_id,entities,lang"
+    }
+
+    fn tweet_expansions() -> &'static str {
+        "expansions=author_id"
+    }
+
+    fn user_fields_param() -> &'static str {
+        "user.fields=created_at,description,public_metrics,verified,profile_image_url,username,name"
+    }
+
+    /// Merge author usernames from `includes.users` into tweet data.
+    fn merge_authors(tweets: &mut [TweetData], includes: &Option<Value>) {
+        if let Some(inc) = includes {
+            if let Some(users) = inc.get("users").and_then(|u| u.as_array()) {
+                for tweet in tweets.iter_mut() {
+                    if let Some(aid) = &tweet.author_id {
+                        for user in users {
+                            if user.get("id").and_then(|i| i.as_str()) == Some(aid) {
+                                tweet.author_username =
+                                    user.get("username").and_then(|u| u.as_str()).map(String::from);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // =======================================================================
+    // PUBLIC API METHODS
+    // =======================================================================
+
+    // -- Tweets -------------------------------------------------------------
+
+    pub async fn create_tweet(
+        &self,
+        text: &str,
+        reply_to: Option<&str>,
+        quote_tweet_id: Option<&str>,
+        media_ids: Option<&[String]>,
+        poll_options: Option<&[String]>,
+        poll_duration: Option<u64>,
+    ) -> Result<TweetResponse, XmasterError> {
+        let mut body = json!({ "text": text });
+
+        if let Some(reply_id) = reply_to {
+            body["reply"] = json!({ "in_reply_to_tweet_id": reply_id });
+        }
+        if let Some(qid) = quote_tweet_id {
+            body["quote_tweet_id"] = json!(qid);
+        }
+        if let Some(ids) = media_ids {
+            if !ids.is_empty() {
+                body["media"] = json!({ "media_ids": ids });
+            }
+        }
+        if let Some(opts) = poll_options {
+            if !opts.is_empty() {
+                body["poll"] = json!({
+                    "options": opts,
+                    "duration_minutes": poll_duration.unwrap_or(1440),
+                });
+            }
+        }
+
+        self.request_data(Method::POST, &format!("{BASE}/tweets"), Some(body))
+            .await
+    }
+
+    pub async fn delete_tweet(&self, id: &str) -> Result<(), XmasterError> {
+        self.request(Method::DELETE, &format!("{BASE}/tweets/{id}"), None)
+            .await?;
+        Ok(())
+    }
+
+    // -- Engagement ---------------------------------------------------------
+
+    pub async fn like_tweet(&self, tweet_id: &str) -> Result<(), XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        self.request(
+            Method::POST,
+            &format!("{BASE}/users/{uid}/likes"),
+            Some(json!({ "tweet_id": tweet_id })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn unlike_tweet(&self, tweet_id: &str) -> Result<(), XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        self.request(
+            Method::DELETE,
+            &format!("{BASE}/users/{uid}/likes/{tweet_id}"),
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn retweet(&self, tweet_id: &str) -> Result<(), XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        self.request(
+            Method::POST,
+            &format!("{BASE}/users/{uid}/retweets"),
+            Some(json!({ "tweet_id": tweet_id })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn unretweet(&self, tweet_id: &str) -> Result<(), XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        self.request(
+            Method::DELETE,
+            &format!("{BASE}/users/{uid}/retweets/{tweet_id}"),
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn bookmark_tweet(&self, tweet_id: &str) -> Result<(), XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        self.request(
+            Method::POST,
+            &format!("{BASE}/users/{uid}/bookmarks"),
+            Some(json!({ "tweet_id": tweet_id })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn unbookmark_tweet(&self, tweet_id: &str) -> Result<(), XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        self.request(
+            Method::DELETE,
+            &format!("{BASE}/users/{uid}/bookmarks/{tweet_id}"),
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    // -- Follow/unfollow ----------------------------------------------------
+
+    pub async fn follow_user(&self, target_user_id: &str) -> Result<(), XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        self.request(
+            Method::POST,
+            &format!("{BASE}/users/{uid}/following"),
+            Some(json!({ "target_user_id": target_user_id })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn unfollow_user(&self, target_user_id: &str) -> Result<(), XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        self.request(
+            Method::DELETE,
+            &format!("{BASE}/users/{uid}/following/{target_user_id}"),
+            None,
+        )
+        .await?;
+        Ok(())
+    }
+
+    // -- User lookup --------------------------------------------------------
+
+    pub async fn get_user_by_username(&self, username: &str) -> Result<UserResponse, XmasterError> {
+        let url = format!(
+            "{BASE}/users/by/username/{username}?{fields}",
+            fields = Self::user_fields_param()
+        );
+        self.request_data(Method::GET, &url, None).await
+    }
+
+    pub async fn get_me(&self) -> Result<UserResponse, XmasterError> {
+        let url = format!("{BASE}/users/me?{fields}", fields = Self::user_fields_param());
+        self.request_data(Method::GET, &url, None).await
+    }
+
+    // -- Timelines ----------------------------------------------------------
+
+    pub async fn get_user_tweets(
+        &self,
+        user_id: &str,
+        count: usize,
+    ) -> Result<Vec<TweetData>, XmasterError> {
+        let max = count.clamp(5, 100);
+        let url = format!(
+            "{BASE}/users/{user_id}/tweets?max_results={max}&{tf}&{exp}&{uf}",
+            tf = Self::tweet_fields(),
+            exp = Self::tweet_expansions(),
+            uf = Self::user_fields_param(),
+        );
+        let (mut tweets, includes) =
+            self.request_list::<TweetData>(Method::GET, &url, None).await?;
+        Self::merge_authors(&mut tweets, &includes);
+        Ok(tweets)
+    }
+
+    pub async fn get_user_mentions(
+        &self,
+        user_id: &str,
+        count: usize,
+    ) -> Result<Vec<TweetData>, XmasterError> {
+        let max = count.clamp(5, 100);
+        let url = format!(
+            "{BASE}/users/{user_id}/mentions?max_results={max}&{tf}&{exp}&{uf}",
+            tf = Self::tweet_fields(),
+            exp = Self::tweet_expansions(),
+            uf = Self::user_fields_param(),
+        );
+        let (mut tweets, includes) =
+            self.request_list::<TweetData>(Method::GET, &url, None).await?;
+        Self::merge_authors(&mut tweets, &includes);
+        Ok(tweets)
+    }
+
+    // -- Followers/following ------------------------------------------------
+
+    pub async fn get_user_followers(
+        &self,
+        user_id: &str,
+        count: usize,
+    ) -> Result<Vec<UserData>, XmasterError> {
+        let max = count.clamp(1, 1000);
+        let url = format!(
+            "{BASE}/users/{user_id}/followers?max_results={max}&{uf}",
+            uf = Self::user_fields_param(),
+        );
+        let (users, _) = self.request_list::<UserData>(Method::GET, &url, None).await?;
+        Ok(users)
+    }
+
+    pub async fn get_user_following(
+        &self,
+        user_id: &str,
+        count: usize,
+    ) -> Result<Vec<UserData>, XmasterError> {
+        let max = count.clamp(1, 1000);
+        let url = format!(
+            "{BASE}/users/{user_id}/following?max_results={max}&{uf}",
+            uf = Self::user_fields_param(),
+        );
+        let (users, _) = self.request_list::<UserData>(Method::GET, &url, None).await?;
+        Ok(users)
+    }
+
+    // -- Search -------------------------------------------------------------
+
+    pub async fn search_tweets(
+        &self,
+        query: &str,
+        mode: &str,
+        count: usize,
+    ) -> Result<Vec<TweetData>, XmasterError> {
+        let max = count.clamp(10, 100);
+        let encoded_query = percent_encoding::utf8_percent_encode(
+            query,
+            percent_encoding::NON_ALPHANUMERIC,
+        );
+        let sort = match mode {
+            "relevancy" | "relevant" => "relevancy",
+            _ => "recency",
+        };
+        let url = format!(
+            "{BASE}/tweets/search/recent?query={encoded_query}&max_results={max}&sort_order={sort}&{tf}&{exp}&{uf}",
+            tf = Self::tweet_fields(),
+            exp = Self::tweet_expansions(),
+            uf = Self::user_fields_param(),
+        );
+        let (mut tweets, includes) =
+            self.request_list::<TweetData>(Method::GET, &url, None).await?;
+        Self::merge_authors(&mut tweets, &includes);
+        Ok(tweets)
+    }
+
+    // -- Bookmarks ----------------------------------------------------------
+
+    pub async fn get_bookmarks(&self, count: usize) -> Result<Vec<TweetData>, XmasterError> {
+        let uid = self.get_authenticated_user_id().await?;
+        let max = count.clamp(1, 100);
+        let url = format!(
+            "{BASE}/users/{uid}/bookmarks?max_results={max}&{tf}&{exp}&{uf}",
+            tf = Self::tweet_fields(),
+            exp = Self::tweet_expansions(),
+            uf = Self::user_fields_param(),
+        );
+        let (mut tweets, includes) =
+            self.request_list::<TweetData>(Method::GET, &url, None).await?;
+        Self::merge_authors(&mut tweets, &includes);
+        Ok(tweets)
+    }
+
+    // -- Direct Messages ----------------------------------------------------
+
+    pub async fn send_dm(
+        &self,
+        participant_id: &str,
+        text: &str,
+    ) -> Result<(), XmasterError> {
+        self.request(
+            Method::POST,
+            &format!("{BASE}/dm_conversations/with/{participant_id}/messages"),
+            Some(json!({ "text": text })),
+        )
+        .await?;
+        Ok(())
+    }
+
+    pub async fn get_dm_conversations(
+        &self,
+        count: usize,
+    ) -> Result<Vec<DmConversation>, XmasterError> {
+        let max = count.clamp(1, 100);
+        let url = format!(
+            "{BASE}/dm_events?max_results={max}&event_types=MessageCreate&dm_event.fields=id,text,sender_id,created_at,dm_conversation_id,participant_ids"
+        );
+        let val = self.request(Method::GET, &url, None).await?;
+
+        // DM events don't directly list conversations — we extract unique conversation IDs
+        let events = val
+            .get("data")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let mut seen = std::collections::HashSet::new();
+        let mut convos = Vec::new();
+
+        for event in &events {
+            if let Some(cid) = event.get("dm_conversation_id").and_then(|c| c.as_str()) {
+                if seen.insert(cid.to_string()) {
+                    let participant_ids = event
+                        .get("participant_ids")
+                        .and_then(|p| p.as_array())
+                        .map(|arr| {
+                            arr.iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect()
+                        })
+                        .unwrap_or_default();
+                    convos.push(DmConversation {
+                        id: cid.to_string(),
+                        participant_ids,
+                    });
+                }
+            }
+        }
+
+        Ok(convos)
+    }
+
+    pub async fn get_dm_messages(
+        &self,
+        conversation_id: &str,
+        count: usize,
+    ) -> Result<Vec<DmMessage>, XmasterError> {
+        let max = count.clamp(1, 100);
+        let url = format!(
+            "{BASE}/dm_conversations/{conversation_id}/dm_events?max_results={max}&event_types=MessageCreate&dm_event.fields=id,text,sender_id,created_at"
+        );
+        let val = self.request(Method::GET, &url, None).await?;
+
+        let events = val
+            .get("data")
+            .and_then(|d| d.as_array())
+            .cloned()
+            .unwrap_or_default();
+
+        let messages: Vec<DmMessage> = events
+            .into_iter()
+            .filter_map(|e| serde_json::from_value(e).ok())
+            .collect();
+
+        Ok(messages)
+    }
+
+    // -- Media upload -------------------------------------------------------
+
+    pub async fn upload_media(&self, file_path: &str) -> Result<String, XmasterError> {
+        self.require_auth()?;
+
+        let path = Path::new(file_path);
+        if !path.exists() {
+            return Err(XmasterError::Media(format!("File not found: {file_path}")));
+        }
+
+        let file_bytes = tokio::fs::read(path).await?;
+        let file_name = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "media".into());
+
+        let mime = match path.extension().and_then(|e| e.to_str()) {
+            Some("png") => "image/png",
+            Some("jpg" | "jpeg") => "image/jpeg",
+            Some("gif") => "image/gif",
+            Some("webp") => "image/webp",
+            Some("mp4") => "video/mp4",
+            Some("mov") => "video/quicktime",
+            _ => "application/octet-stream",
+        };
+
+        let is_video = mime.starts_with("video/");
+        let category = if is_video { "tweet_video" } else { "tweet_image" };
+
+        // For small images, use simple upload
+        if !is_video && file_bytes.len() < 5_000_000 {
+            return self.simple_upload(&file_bytes, &file_name).await;
+        }
+
+        // Chunked upload: INIT → APPEND → FINALIZE
+        self.chunked_upload(&file_bytes, mime, category).await
+    }
+
+    async fn simple_upload(
+        &self,
+        data: &[u8],
+        file_name: &str,
+    ) -> Result<String, XmasterError> {
+        let part = reqwest::multipart::Part::bytes(data.to_vec())
+            .file_name(file_name.to_string());
+        let form = reqwest::multipart::Form::new().part("media", part);
+
+        let resp = self.ctx.client.clone().oauth1(self.secrets())
+            .post(UPLOAD_URL)
+            .multipart(form)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(XmasterError::Media(format!(
+                "Upload failed (HTTP {status}): {text}"
+            )));
+        }
+
+        let upload: MediaUploadResponse = resp.json().await?;
+        upload
+            .media_id_string
+            .or_else(|| upload.media_id.map(|id| id.to_string()))
+            .ok_or_else(|| XmasterError::Media("No media_id in upload response".into()))
+    }
+
+    async fn chunked_upload(
+        &self,
+        data: &[u8],
+        mime: &str,
+        category: &str,
+    ) -> Result<String, XmasterError> {
+        // INIT
+        // INIT
+        let total = data.len().to_string();
+        let resp = self.ctx.client.clone().oauth1(self.secrets())
+            .post(UPLOAD_URL)
+            .form(&[
+                ("command", "INIT"),
+                ("media_type", mime),
+                ("total_bytes", total.as_str()),
+                ("media_category", category),
+            ])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(XmasterError::Media(format!("INIT failed: {text}")));
+        }
+
+        let init_resp: MediaUploadResponse = resp.json().await?;
+        let media_id = init_resp
+            .media_id_string
+            .or_else(|| init_resp.media_id.map(|id| id.to_string()))
+            .ok_or_else(|| XmasterError::Media("No media_id from INIT".into()))?;
+
+        // APPEND in 1MB chunks
+        let chunk_size = 1024 * 1024;
+        for (i, chunk) in data.chunks(chunk_size).enumerate() {
+            let b64_chunk = base64::engine::general_purpose::STANDARD.encode(chunk);
+            let seg = i.to_string();
+
+            let resp = self.ctx.client.clone().oauth1(self.secrets())
+                .post(UPLOAD_URL)
+                .form(&[
+                    ("command", "APPEND"),
+                    ("media_id", media_id.as_str()),
+                    ("segment_index", seg.as_str()),
+                    ("media_data", b64_chunk.as_str()),
+                ])
+                .send()
+                .await?;
+
+            if !resp.status().is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                return Err(XmasterError::Media(format!(
+                    "APPEND segment {i} failed: {text}"
+                )));
+            }
+        }
+
+        // FINALIZE
+        let resp = self.ctx.client.clone().oauth1(self.secrets())
+            .post(UPLOAD_URL)
+            .form(&[("command", "FINALIZE"), ("media_id", media_id.as_str())])
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(XmasterError::Media(format!("FINALIZE failed: {text}")));
+        }
+
+        // For video, poll processing_info until complete
+        let finalize: Value = resp.json().await?;
+        if let Some(info) = finalize.get("processing_info") {
+            self.wait_for_processing(&media_id, info).await?;
+        }
+
+        Ok(media_id)
+    }
+
+    async fn wait_for_processing(
+        &self,
+        media_id: &str,
+        initial_info: &Value,
+    ) -> Result<(), XmasterError> {
+        let mut check_after = initial_info
+            .get("check_after_secs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(5);
+
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(check_after)).await;
+
+            let url = format!("{UPLOAD_URL}?command=STATUS&media_id={media_id}");
+
+            let resp = self.ctx.client.clone().oauth1(self.secrets()).get(&url).send().await?;
+
+            if !resp.status().is_success() {
+                let text = resp.text().await.unwrap_or_default();
+                return Err(XmasterError::Media(format!(
+                    "STATUS check failed: {text}"
+                )));
+            }
+
+            let status: Value = resp.json().await?;
+            let state = status
+                .get("processing_info")
+                .and_then(|p| p.get("state"))
+                .and_then(|s| s.as_str())
+                .unwrap_or("succeeded");
+
+            match state {
+                "succeeded" => return Ok(()),
+                "failed" => {
+                    let error = status
+                        .get("processing_info")
+                        .and_then(|p| p.get("error"))
+                        .and_then(|e| e.get("message"))
+                        .and_then(|m| m.as_str())
+                        .unwrap_or("Unknown processing error");
+                    return Err(XmasterError::Media(format!(
+                        "Media processing failed: {error}"
+                    )));
+                }
+                _ => {
+                    check_after = status
+                        .get("processing_info")
+                        .and_then(|p| p.get("check_after_secs"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(5);
+                }
+            }
+        }
+    }
+}

@@ -1,0 +1,52 @@
+[package]
+name = "xmaster"
+version = "0.1.0"
+edition = "2021"
+description = "Enterprise-grade X/Twitter CLI — post, reply, like, retweet, DM, search, and more"
+license = "MIT"
+repository = "https://github.com/199-biotechnologies/xmaster"
+authors = ["199 Biotechnologies"]
+keywords = ["twitter", "x", "cli", "social-media", "api"]
+categories = ["command-line-utilities", "api-bindings"]
+
+[[bin]]
+name = "xmaster"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4.5", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+reqwest = { version = "0.12", features = ["json", "rustls-tls", "multipart", "stream"] }
+reqwest-oauth1 = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+thiserror = "2"
+figment = { version = "0.10", features = ["toml", "env"] }
+governor = "0.6"
+comfy-table = "7"
+owo-colors = "4"
+indicatif = "0.17"
+directories = "5"
+self_update = { version = "0.43", features = ["archive-tar", "archive-zip", "compression-flate2"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+base64 = "0.22"
+chrono = { version = "0.4", features = ["serde"] }
+url = "2"
+hmac = "0.12"
+sha1 = "0.10"
+rand = "0.8"
+percent-encoding = "2"
+toml = "0.8"
+async-trait = "0.1"
+
+[dev-dependencies]
+assert_cmd = "2"
+predicates = "3"
+tempfile = "3"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3

@@ -1,0 +1,27 @@
+# xmaster configuration
+# Copy to ~/.config/xmaster/config.toml (Linux) or
+# ~/Library/Application Support/com.199biotechnologies.xmaster/config.toml (macOS)
+#
+# All values can be overridden with environment variables prefixed XMASTER_
+# e.g., XMASTER_KEYS_API_KEY, XMASTER_SETTINGS_TIMEOUT
+
+[keys]
+# X API v2 credentials (from https://developer.x.com)
+api_key = ""
+api_secret = ""
+access_token = ""
+access_token_secret = ""
+
+# Bearer token (for app-only auth, optional if OAuth keys are set)
+bearer_token = ""
+
+# xAI API key (for AI-powered search and trending)
+# Get yours at https://console.x.ai
+xai = ""
+
+[settings]
+# Request timeout in seconds
+timeout = 15
+
+# Default number of results to return
+count = 10

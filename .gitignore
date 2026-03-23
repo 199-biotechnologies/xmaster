@@ -1,0 +1,39 @@
+# Rust build artifacts
+/target/
+**/*.rs.bk
+
+# Cargo lock (binary crate — include in repo)
+# Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Environment and secrets
+.env
+.env.*
+config.toml
+
+# Debug
+*.dSYM/
+*.su
+*.iml
+
+# Coverage
+*.profraw
+*.profdata
+lcov.info
+tarpaulin-report.html
+
+# Team runs (CI artifacts)
+.team-runs/
+.claude/
+.team-runs/

@@ -1,0 +1,70 @@
+use crate::context::AppContext;
+use crate::errors::XmasterError;
+use crate::output::{self, OutputFormat, Tableable};
+use crate::providers::xapi::XApi;
+use serde::Serialize;
+use std::sync::Arc;
+
+#[derive(Serialize)]
+struct UserInfo {
+    id: String,
+    username: String,
+    name: String,
+    description: String,
+    followers: u64,
+    following: u64,
+    tweets: u64,
+    verified: bool,
+    created_at: String,
+    profile_image_url: String,
+}
+
+impl Tableable for UserInfo {
+    fn to_table(&self) -> comfy_table::Table {
+        let mut table = comfy_table::Table::new();
+        table.set_header(vec!["Field", "Value"]);
+        table.add_row(vec!["ID", &self.id]);
+        table.add_row(vec!["Username", &format!("@{}", self.username)]);
+        table.add_row(vec!["Name", &self.name]);
+        table.add_row(vec!["Bio", &self.description]);
+        table.add_row(vec!["Followers", &self.followers.to_string()]);
+        table.add_row(vec!["Following", &self.following.to_string()]);
+        table.add_row(vec!["Tweets", &self.tweets.to_string()]);
+        table.add_row(vec!["Verified", if self.verified { "Yes" } else { "No" }]);
+        table.add_row(vec!["Created", &self.created_at]);
+        if !self.profile_image_url.is_empty() {
+            table.add_row(vec!["Avatar", &self.profile_image_url]);
+        }
+        table
+    }
+}
+
+fn to_user_info(u: crate::providers::xapi::UserResponse) -> UserInfo {
+    let metrics = u.public_metrics.as_ref();
+    UserInfo {
+        id: u.id,
+        username: u.username,
+        name: u.name,
+        description: u.description.unwrap_or_default(),
+        followers: metrics.map(|m| m.followers_count).unwrap_or(0),
+        following: metrics.map(|m| m.following_count).unwrap_or(0),
+        tweets: metrics.map(|m| m.tweet_count).unwrap_or(0),
+        verified: u.verified.unwrap_or(false),
+        created_at: u.created_at.unwrap_or_default(),
+        profile_image_url: u.profile_image_url.unwrap_or_default(),
+    }
+}
+
+pub async fn info(ctx: Arc<AppContext>, format: OutputFormat, username: &str) -> Result<(), XmasterError> {
+    let api = XApi::new(ctx.clone());
+    let user = api.get_user_by_username(username).await?;
+    output::render(format, &to_user_info(user), None);
+    Ok(())
+}
+
+pub async fn me(ctx: Arc<AppContext>, format: OutputFormat) -> Result<(), XmasterError> {
+    let api = XApi::new(ctx.clone());
+    let user = api.get_me().await?;
+    output::render(format, &to_user_info(user), None);
+    Ok(())
+}

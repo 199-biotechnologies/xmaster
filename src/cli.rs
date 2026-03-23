@@ -1,0 +1,260 @@
+use clap::{Parser, Subcommand};
+
+#[derive(Parser)]
+#[command(
+    name = "xmaster",
+    version,
+    about = "Enterprise-grade X/Twitter CLI — post, reply, like, retweet, DM, search, and more",
+    long_about = "Built by 199 Biotechnologies for AI agents and humans.\n\nAgent-friendly: auto-JSON when piped, semantic exit codes, structured errors."
+)]
+pub struct Cli {
+    #[command(subcommand)]
+    pub command: Commands,
+
+    /// Output as JSON (auto-enabled when piped)
+    #[arg(long, global = true)]
+    pub json: bool,
+
+    /// Suppress non-essential output
+    #[arg(long, global = true)]
+    pub quiet: bool,
+}
+
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Post a tweet (text, media, reply, quote, poll)
+    Post {
+        /// Tweet text
+        text: String,
+        /// Reply to a tweet ID
+        #[arg(long)]
+        reply_to: Option<String>,
+        /// Quote a tweet ID
+        #[arg(long)]
+        quote: Option<String>,
+        /// Media file paths to attach
+        #[arg(long, num_args = 1..=4)]
+        media: Vec<String>,
+        /// Poll options (comma-separated)
+        #[arg(long)]
+        poll: Option<String>,
+        /// Poll duration in minutes (default 1440 = 24h)
+        #[arg(long, default_value = "1440")]
+        poll_duration: u64,
+    },
+
+    /// Delete a tweet
+    Delete {
+        /// Tweet ID to delete
+        id: String,
+    },
+
+    /// Like a tweet
+    Like {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Unlike a tweet
+    Unlike {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Retweet a tweet
+    Retweet {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Undo a retweet
+    Unretweet {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Bookmark a tweet
+    Bookmark {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Remove a bookmark
+    Unbookmark {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Follow a user
+    Follow {
+        /// Username (without @)
+        username: String,
+    },
+
+    /// Unfollow a user
+    Unfollow {
+        /// Username (without @)
+        username: String,
+    },
+
+    /// Direct messages
+    Dm {
+        #[command(subcommand)]
+        action: DmCommands,
+    },
+
+    /// View timeline
+    Timeline {
+        /// Username (omit for home timeline)
+        #[arg(long)]
+        user: Option<String>,
+        /// Number of tweets
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+    },
+
+    /// View your mentions
+    Mentions {
+        /// Number of mentions
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+    },
+
+    /// Search tweets (X API v2)
+    Search {
+        /// Search query
+        query: String,
+        /// Search mode
+        #[arg(long, default_value = "recent")]
+        mode: String,
+        /// Number of results
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+    },
+
+    /// AI-powered search (xAI/Grok)
+    SearchAi {
+        /// Search query
+        query: String,
+        /// Number of results
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+        /// Filter by date (from)
+        #[arg(long)]
+        from_date: Option<String>,
+        /// Filter by date (to)
+        #[arg(long)]
+        to_date: Option<String>,
+    },
+
+    /// Get trending topics
+    Trending {
+        /// Region filter
+        #[arg(long)]
+        region: Option<String>,
+        /// Category filter
+        #[arg(long)]
+        category: Option<String>,
+    },
+
+    /// Get user info
+    User {
+        /// Username (without @)
+        username: String,
+    },
+
+    /// Get authenticated user info
+    Me,
+
+    /// List bookmarks
+    Bookmarks {
+        /// Number of bookmarks
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+    },
+
+    /// List followers
+    Followers {
+        /// Username (without @)
+        username: String,
+        /// Number of results
+        #[arg(long, short, default_value = "20")]
+        count: usize,
+    },
+
+    /// List following
+    Following {
+        /// Username (without @)
+        username: String,
+        /// Number of results
+        #[arg(long, short, default_value = "20")]
+        count: usize,
+    },
+
+    /// Manage configuration
+    Config {
+        #[command(subcommand)]
+        action: ConfigCommands,
+    },
+
+    /// Show agent-readable capabilities
+    AgentInfo,
+
+    /// Self-update from GitHub releases
+    Update {
+        /// Check for updates without installing
+        #[arg(long)]
+        check: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum DmCommands {
+    /// Send a direct message
+    Send {
+        /// Username (without @)
+        username: String,
+        /// Message text
+        text: String,
+    },
+    /// View DM inbox
+    Inbox {
+        /// Number of conversations
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+    },
+    /// View a DM thread
+    Thread {
+        /// Conversation ID
+        id: String,
+        /// Number of messages
+        #[arg(long, short, default_value = "20")]
+        count: usize,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCommands {
+    /// Show current configuration (keys masked)
+    Show,
+    /// Set a configuration value
+    Set {
+        /// Key path (e.g., keys.api_key)
+        key: String,
+        /// Value to set
+        value: String,
+    },
+    /// Validate configured credentials
+    Check,
+}
+
+/// Parse a tweet ID from a URL or raw ID string
+pub fn parse_tweet_id(input: &str) -> String {
+    if input.contains("x.com/") || input.contains("twitter.com/") {
+        if let Some(id) = input.split('/').last() {
+            let id = id.split('?').next().unwrap_or(id);
+            return id.to_string();
+        }
+    }
+    input.to_string()
+}
