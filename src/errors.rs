@@ -30,6 +30,9 @@ pub enum XmasterError {
     #[error(transparent)]
     Http(#[from] reqwest::Error),
 
+    #[error("OAuth error: {0}")]
+    OAuth(#[from] reqwest_oauth1::Error),
+
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 
@@ -48,6 +51,7 @@ impl XmasterError {
             Self::NotFound(_) => 1,
             Self::Json(_) => 1,
             Self::Io(_) => 1,
+            Self::OAuth(_) => 3,
         }
     }
 
@@ -62,6 +66,7 @@ impl XmasterError {
             Self::Http(_) => "http_error",
             Self::Json(_) => "json_error",
             Self::Io(_) => "io_error",
+            Self::OAuth(_) => "oauth_error",
         }
     }
 

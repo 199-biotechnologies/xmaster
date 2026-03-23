@@ -1,6 +1,6 @@
 use directories::ProjectDirs;
 use figment::{
-    providers::{Env, Serialized, Toml},
+    providers::{Env, Format, Serialized, Toml},
     Figment,
 };
 use serde::{Deserialize, Serialize};
@@ -90,7 +90,7 @@ pub fn load_config() -> Result<AppConfig, XmasterError> {
     let path = config_path();
     let config: AppConfig = Figment::new()
         .merge(Serialized::defaults(AppConfig::default()))
-        .merge(Toml::file(&path))
+        .merge(Toml::file_exact(&path))
         .merge(Env::prefixed("XMASTER_").split("_"))
         .extract()
         .map_err(|e| XmasterError::Config(e.to_string()))?;
