@@ -14,8 +14,12 @@ pub mod metrics;
 pub mod lists;
 pub mod moderation;
 pub mod rate_limits;
+pub mod analyze;
+pub mod track;
+pub mod report;
+pub mod suggest;
 
-use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, ListCommands};
+use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, ListCommands, TrackCommands, ReportCommands, SuggestCommands};
 use crate::context::AppContext;
 use crate::errors::XmasterError;
 use crate::output::OutputFormat;
@@ -91,5 +95,18 @@ pub async fn dispatch(
         Commands::Unblock { username } => moderation::unblock(ctx, format, username).await,
         Commands::Mute { username } => moderation::mute(ctx, format, username).await,
         Commands::Unmute { username } => moderation::unmute(ctx, format, username).await,
+        Commands::Analyze { text, goal } => analyze::execute(ctx, format, text, goal.as_deref()).await,
+        Commands::Track { action } => match action {
+            TrackCommands::Run => track::track_run(ctx, format).await,
+            TrackCommands::Status => track::track_status(ctx, format).await,
+        },
+        Commands::Report { action } => match action {
+            ReportCommands::Daily => report::daily(ctx, format).await,
+            ReportCommands::Weekly => report::weekly(ctx, format).await,
+        },
+        Commands::Suggest { action } => match action {
+            SuggestCommands::BestTime => suggest::best_time(ctx, format).await,
+            SuggestCommands::NextPost => suggest::next_post(ctx, format).await,
+        },
     }
 }

@@ -39,6 +39,7 @@ rand = "0.8"
 percent-encoding = "2"
 toml = "0.8"
 async-trait = "0.1"
+rusqlite = { version = "0.31", features = ["bundled"] }
 
 [dev-dependencies]
 assert_cmd = "2"

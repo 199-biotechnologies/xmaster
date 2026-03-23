@@ -260,12 +260,63 @@ pub enum Commands {
         username: String,
     },
 
+    /// Analyze a tweet before posting (pre-flight check)
+    Analyze {
+        /// Tweet text to analyze
+        text: String,
+        /// Optimization goal (replies, impressions, bookmarks)
+        #[arg(long)]
+        goal: Option<String>,
+    },
+
+    /// Track metric snapshots for recent posts
+    Track {
+        #[command(subcommand)]
+        action: TrackCommands,
+    },
+
+    /// Performance reports
+    Report {
+        #[command(subcommand)]
+        action: ReportCommands,
+    },
+
+    /// Timing and posting suggestions
+    Suggest {
+        #[command(subcommand)]
+        action: SuggestCommands,
+    },
+
     /// Self-update from GitHub releases
     Update {
         /// Check for updates without installing
         #[arg(long)]
         check: bool,
     },
+}
+
+#[derive(Subcommand)]
+pub enum TrackCommands {
+    /// Snapshot metrics for all recent posts (run via cron)
+    Run,
+    /// Show tracking status for recent posts
+    Status,
+}
+
+#[derive(Subcommand)]
+pub enum ReportCommands {
+    /// Daily performance report
+    Daily,
+    /// Weekly performance report
+    Weekly,
+}
+
+#[derive(Subcommand)]
+pub enum SuggestCommands {
+    /// Show best posting times from your history
+    BestTime,
+    /// Check if it's safe to post now (cannibalization guard)
+    NextPost,
 }
 
 #[derive(Subcommand)]

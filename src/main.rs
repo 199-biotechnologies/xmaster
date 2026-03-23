@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod context;
 mod errors;
+pub mod intel;
 mod output;
 mod providers;
 
