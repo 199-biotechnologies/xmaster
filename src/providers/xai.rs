@@ -122,7 +122,7 @@ impl XaiSearch {
             });
         }
         if resp.status().as_u16() == 429 {
-            return Err(XmasterError::RateLimited { provider: "xai" });
+            return Err(XmasterError::RateLimited { provider: "xai", reset_at: 0 });
         }
         if !resp.status().is_success() {
             let status = resp.status();

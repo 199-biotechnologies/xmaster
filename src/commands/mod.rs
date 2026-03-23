@@ -9,8 +9,13 @@ pub mod config_cmd;
 pub mod agent_info;
 pub mod update;
 pub mod user;
+pub mod thread;
+pub mod metrics;
+pub mod lists;
+pub mod moderation;
+pub mod rate_limits;
 
-use crate::cli::{Cli, Commands, ConfigCommands, DmCommands};
+use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, ListCommands};
 use crate::context::AppContext;
 use crate::errors::XmasterError;
 use crate::output::OutputFormat;
@@ -61,5 +66,30 @@ pub async fn dispatch(
             Ok(())
         }
         Commands::Update { check } => update::execute(*check).await,
+        Commands::Thread { texts, media } => thread::execute(ctx, format, texts, media).await,
+        Commands::Metrics { id } => metrics::execute(ctx, format, id).await,
+        Commands::Lists { action } => match action {
+            ListCommands::Create { name, description } => {
+                lists::create(ctx, format, name, description.as_deref()).await
+            }
+            ListCommands::Delete { id } => lists::delete(ctx, format, id).await,
+            ListCommands::Add { list_id, username } => {
+                lists::add_member(ctx, format, list_id, username).await
+            }
+            ListCommands::Remove { list_id, username } => {
+                lists::remove_member(ctx, format, list_id, username).await
+            }
+            ListCommands::Timeline { list_id, count } => {
+                lists::timeline(ctx, format, list_id, *count).await
+            }
+            ListCommands::Mine { count } => lists::mine(ctx, format, *count).await,
+        },
+        Commands::HideReply { id } => moderation::hide_reply(ctx, format, id).await,
+        Commands::UnhideReply { id } => moderation::unhide_reply(ctx, format, id).await,
+        Commands::RateLimits => rate_limits::execute(ctx, format).await,
+        Commands::Block { username } => moderation::block(ctx, format, username).await,
+        Commands::Unblock { username } => moderation::unblock(ctx, format, username).await,
+        Commands::Mute { username } => moderation::mute(ctx, format, username).await,
+        Commands::Unmute { username } => moderation::unmute(ctx, format, username).await,
     }
 }

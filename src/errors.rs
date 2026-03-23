@@ -15,8 +15,14 @@ pub enum XmasterError {
         message: String,
     },
 
-    #[error("Rate limited by {provider}")]
-    RateLimited { provider: &'static str },
+    #[error("Rate limited by {provider} (resets at {reset_at})")]
+    RateLimited {
+        provider: &'static str,
+        reset_at: u64,
+    },
+
+    #[error("Server error (HTTP {status}), retries exhausted")]
+    ServerError { status: u16 },
 
     #[error("Configuration error: {0}")]
     Config(String),
@@ -46,6 +52,7 @@ impl XmasterError {
             Self::Config(_) => 2,
             Self::AuthMissing { .. } => 3,
             Self::RateLimited { .. } => 4,
+            Self::ServerError { .. } => 1,
             Self::Api { .. } | Self::Http(_) => 1,
             Self::Media(_) => 1,
             Self::NotFound(_) => 1,
@@ -60,6 +67,7 @@ impl XmasterError {
             Self::Api { code, .. } => code,
             Self::AuthMissing { .. } => "auth_missing",
             Self::RateLimited { .. } => "rate_limited",
+            Self::ServerError { .. } => "server_error",
             Self::Config(_) => "config_error",
             Self::Media(_) => "media_error",
             Self::NotFound(_) => "not_found",
@@ -79,9 +87,17 @@ impl XmasterError {
                     "Set X API credentials via env vars (XMASTER_API_KEY, etc.) or run: xmaster config set keys.api_key <key>".into()
                 }
             }
-            Self::RateLimited { .. } => "Wait and retry. Check rate limits with: xmaster config check".into(),
+            Self::RateLimited { reset_at, .. } => {
+                format!("Rate limited. Resets at Unix timestamp {reset_at}. Wait and retry, or check limits with: xmaster config check")
+            }
+            Self::ServerError { .. } => "X API server error. Try again later.".into(),
             Self::Config(msg) => format!("Fix configuration: {msg}"),
             _ => "Check xmaster --help for usage".into(),
         }
+    }
+
+    /// Returns true if this error is retryable (429 or 5xx).
+    pub fn is_retryable(&self) -> bool {
+        matches!(self, Self::RateLimited { .. } | Self::ServerError { .. })
     }
 }

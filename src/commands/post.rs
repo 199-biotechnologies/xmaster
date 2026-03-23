@@ -64,12 +64,33 @@ pub async fn execute(
             poll_options.as_deref(),
             Some(poll_duration),
         )
-        .await?;
+        .await
+        .map_err(|err| {
+            // Add contextual hint when post fails with 403
+            if let XmasterError::AuthMissing { provider, ref message } = err {
+                if message.contains("403") {
+                    return XmasterError::Api {
+                        provider,
+                        code: "forbidden",
+                        message: format!(
+                            "{message}. Hint: Check your app permissions — ensure Read+Write is enabled"
+                        ),
+                    };
+                }
+            }
+            err
+        })?;
 
+    let tweet_id = result.id.clone();
     let display = PostResult {
         id: result.id,
         text: result.text,
     };
     output::render(format, &display, None);
+
+    // Undo hint (only in table mode so it doesn't pollute JSON/CSV stdout)
+    if format == OutputFormat::Table {
+        eprintln!("Delete: xmaster delete {tweet_id}");
+    }
     Ok(())
 }

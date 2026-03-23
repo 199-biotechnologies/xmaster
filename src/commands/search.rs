@@ -1,6 +1,6 @@
 use crate::context::AppContext;
 use crate::errors::XmasterError;
-use crate::output::{self, OutputFormat, Tableable};
+use crate::output::{self, CsvRenderable, OutputFormat, Tableable};
 use crate::providers::xapi::XApi;
 use serde::Serialize;
 use std::sync::Arc;
@@ -44,6 +44,28 @@ impl Tableable for SearchResults {
     }
 }
 
+impl CsvRenderable for SearchResults {
+    fn csv_headers() -> Vec<&'static str> {
+        vec!["id", "author", "text", "likes", "retweets", "date"]
+    }
+
+    fn csv_rows(&self) -> Vec<Vec<String>> {
+        self.tweets
+            .iter()
+            .map(|t| {
+                vec![
+                    t.id.clone(),
+                    t.author.clone(),
+                    t.text.clone(),
+                    t.likes.to_string(),
+                    t.retweets.to_string(),
+                    t.date.clone(),
+                ]
+            })
+            .collect()
+    }
+}
+
 pub async fn execute(
     ctx: Arc<AppContext>,
     format: OutputFormat,
@@ -52,6 +74,9 @@ pub async fn execute(
     count: usize,
 ) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
+    // TODO: Pagination — when xapi exposes next_token from search_tweets(),
+    // loop here while next_token.is_some() && pages < max_pages, accumulating
+    // results across pages. The --all / --max-pages flags will be wired in cli.rs.
     let tweets = api.search_tweets(query, mode, count).await?;
     let display = SearchResults {
         query: query.to_string(),
@@ -69,6 +94,6 @@ pub async fn execute(
             }
         }).collect(),
     };
-    output::render(format, &display, None);
+    output::render_csv(format, &display, None);
     Ok(())
 }

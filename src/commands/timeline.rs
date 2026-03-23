@@ -1,6 +1,6 @@
 use crate::context::AppContext;
 use crate::errors::XmasterError;
-use crate::output::{self, OutputFormat, Tableable};
+use crate::output::{self, CsvRenderable, OutputFormat, Tableable};
 use crate::providers::xapi::XApi;
 use serde::Serialize;
 use std::sync::Arc;
@@ -43,6 +43,28 @@ impl Tableable for TweetList {
     }
 }
 
+impl CsvRenderable for TweetList {
+    fn csv_headers() -> Vec<&'static str> {
+        vec!["id", "author", "text", "likes", "retweets", "date"]
+    }
+
+    fn csv_rows(&self) -> Vec<Vec<String>> {
+        self.tweets
+            .iter()
+            .map(|t| {
+                vec![
+                    t.id.clone(),
+                    t.author.clone(),
+                    t.text.clone(),
+                    t.likes.to_string(),
+                    t.retweets.to_string(),
+                    t.date.clone(),
+                ]
+            })
+            .collect()
+    }
+}
+
 fn tweets_to_list(tweets: Vec<crate::providers::xapi::TweetData>) -> TweetList {
     TweetList {
         tweets: tweets.into_iter().map(|t| {
@@ -75,8 +97,11 @@ pub async fn timeline(
         }
         None => api.get_authenticated_user_id().await?,
     };
+    // TODO: Pagination — when xapi exposes next_token from get_user_tweets(),
+    // loop here while next_token.is_some() && pages < max_pages, accumulating
+    // tweets across pages. The --all / --max-pages flags will be wired in cli.rs.
     let tweets = api.get_user_tweets(&user_id, count).await?;
-    output::render(format, &tweets_to_list(tweets), None);
+    output::render_csv(format, &tweets_to_list(tweets), None);
     Ok(())
 }
 
@@ -87,8 +112,10 @@ pub async fn mentions(
 ) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
     let user_id = api.get_authenticated_user_id().await?;
+    // TODO: Pagination — same pattern as timeline(): loop with next_token
+    // from get_user_mentions() when --all is passed.
     let tweets = api.get_user_mentions(&user_id, count).await?;
-    output::render(format, &tweets_to_list(tweets), None);
+    output::render_csv(format, &tweets_to_list(tweets), None);
     Ok(())
 }
 
@@ -98,7 +125,9 @@ pub async fn bookmarks(
     count: usize,
 ) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
+    // TODO: Pagination — same pattern as timeline(): loop with next_token
+    // from get_bookmarks() when --all is passed.
     let tweets = api.get_bookmarks(count).await?;
-    output::render(format, &tweets_to_list(tweets), None);
+    output::render_csv(format, &tweets_to_list(tweets), None);
     Ok(())
 }

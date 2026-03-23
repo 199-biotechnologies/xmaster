@@ -7,10 +7,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::path::Path;
 use std::sync::Arc;
-use tokio::sync::OnceCell;
+use std::time::Duration;
+use tokio::sync::{Mutex, OnceCell};
+use tracing::warn;
+
+/// Max retry attempts for transient errors (429, 5xx).
+const MAX_RETRIES: u32 = 3;
 
 const BASE: &str = "https://api.x.com/2";
 const UPLOAD_URL: &str = "https://upload.twitter.com/1.1/media/upload.json";
+
+// ---------------------------------------------------------------------------
+// Rate limit info
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct RateLimitInfo {
+    /// Total requests allowed in the window.
+    pub limit: u32,
+    /// Requests remaining in the current window.
+    pub remaining: u32,
+    /// Unix timestamp when the window resets.
+    pub reset: u64,
+}
 
 // ---------------------------------------------------------------------------
 // Response / data types
@@ -133,6 +152,7 @@ struct MediaUploadResponse {
 pub struct XApi {
     ctx: Arc<AppContext>,
     cached_user_id: OnceCell<String>,
+    last_rate_limit: Mutex<Option<RateLimitInfo>>,
 }
 
 impl XApi {
@@ -140,7 +160,29 @@ impl XApi {
         Self {
             ctx,
             cached_user_id: OnceCell::new(),
+            last_rate_limit: Mutex::new(None),
         }
+    }
+
+    // -- Rate limit accessors -----------------------------------------------
+
+    /// Returns the most recently observed rate limit info, if any.
+    pub async fn last_rate_limit(&self) -> Option<RateLimitInfo> {
+        *self.last_rate_limit.lock().await
+    }
+
+    /// Makes a lightweight call to /2/users/me just to capture rate limit headers.
+    pub async fn get_rate_limits(&self) -> Result<RateLimitInfo, XmasterError> {
+        self.request(Method::GET, &format!("{BASE}/users/me?user.fields=id"), None)
+            .await?;
+        self.last_rate_limit
+            .lock()
+            .await
+            .ok_or_else(|| XmasterError::Api {
+                provider: "x",
+                code: "no_rate_limit_headers",
+                message: "No rate limit headers in response".into(),
+            })
     }
 
     // -- OAuth helpers ------------------------------------------------------
@@ -161,8 +203,82 @@ impl XApi {
         Ok(())
     }
 
-    /// Low-level signed request. Returns the parsed JSON `Value`.
+    // -- Rate limit header parser -------------------------------------------
+
+    fn parse_rate_limit_headers(headers: &reqwest::header::HeaderMap) -> Option<RateLimitInfo> {
+        let limit = headers
+            .get("x-rate-limit-limit")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u32>().ok())?;
+        let remaining = headers
+            .get("x-rate-limit-remaining")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u32>().ok())?;
+        let reset = headers
+            .get("x-rate-limit-reset")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())?;
+        Some(RateLimitInfo { limit, remaining, reset })
+    }
+
+    // -- Retry wrapper ------------------------------------------------------
+
+    /// Low-level signed request with automatic retry on transient errors.
+    /// Returns the parsed JSON `Value`.
     async fn request(
+        &self,
+        method: Method,
+        url: &str,
+        body: Option<Value>,
+    ) -> Result<Value, XmasterError> {
+        let mut last_err: Option<XmasterError> = None;
+
+        for attempt in 0..MAX_RETRIES {
+            match self.request_once(method.clone(), url, body.clone()).await {
+                Ok(val) => return Ok(val),
+                Err(e) if e.is_retryable() && attempt + 1 < MAX_RETRIES => {
+                    // Exponential backoff: 1s, 2s, 4s base + random 0-500ms jitter
+                    let base_ms = 1000u64 * (1u64 << attempt);
+                    let jitter_ms = rand::random::<u64>() % 500;
+                    let mut delay = Duration::from_millis(base_ms + jitter_ms);
+
+                    // For 429, honour Retry-After / x-rate-limit-reset if available
+                    if let XmasterError::RateLimited { reset_at, .. } = &e {
+                        if *reset_at > 0 {
+                            let now = std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs();
+                            if *reset_at > now {
+                                let wait = (*reset_at - now).min(60) + (jitter_ms / 1000);
+                                delay = Duration::from_secs(wait);
+                            }
+                        }
+                    }
+
+                    warn!(
+                        attempt = attempt + 1,
+                        max = MAX_RETRIES,
+                        delay_ms = delay.as_millis() as u64,
+                        error = %e,
+                        "Retrying after transient error"
+                    );
+                    tokio::time::sleep(delay).await;
+                    last_err = Some(e);
+                }
+                Err(e) => return Err(e),
+            }
+        }
+
+        Err(last_err.unwrap_or_else(|| XmasterError::Api {
+            provider: "x",
+            code: "retry_exhausted",
+            message: "All retry attempts failed".into(),
+        }))
+    }
+
+    /// Single HTTP request attempt (no retry). Parses rate-limit headers.
+    async fn request_once(
         &self,
         method: Method,
         url: &str,
@@ -170,8 +286,6 @@ impl XApi {
     ) -> Result<Value, XmasterError> {
         self.require_auth()?;
 
-        // reqwest::Client::clone is cheap (Arc bump). We must create fresh
-        // secrets per call because oauth1() consumes both client and secrets.
         let resp = match method {
             Method::GET => {
                 self.ctx.client.clone().oauth1(self.secrets())
@@ -210,6 +324,11 @@ impl XApi {
 
         let status = resp.status();
 
+        // Parse and store rate limit headers from every response.
+        if let Some(rl) = Self::parse_rate_limit_headers(resp.headers()) {
+            *self.last_rate_limit.lock().await = Some(rl);
+        }
+
         if status == 401 || status == 403 {
             let text = resp.text().await.unwrap_or_default();
             return Err(XmasterError::AuthMissing {
@@ -217,14 +336,43 @@ impl XApi {
                 message: format!("HTTP {status}: {text}"),
             });
         }
+
         if status == 429 {
-            return Err(XmasterError::RateLimited { provider: "x" });
+            let reset_at = resp
+                .headers()
+                .get("x-rate-limit-reset")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.parse::<u64>().ok())
+                .or_else(|| {
+                    resp.headers()
+                        .get("retry-after")
+                        .and_then(|v| v.to_str().ok())
+                        .and_then(|v| v.parse::<u64>().ok())
+                        .map(|secs| {
+                            std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .unwrap_or_default()
+                                .as_secs()
+                                + secs
+                        })
+                })
+                .unwrap_or(0);
+            return Err(XmasterError::RateLimited {
+                provider: "x",
+                reset_at,
+            });
+        }
+
+        // 5xx server errors — retryable
+        if status.as_u16() >= 500 {
+            return Err(XmasterError::ServerError {
+                status: status.as_u16(),
+            });
         }
 
         let text = resp.text().await?;
 
         if text.is_empty() {
-            // Some endpoints (DELETE, engagement) return 200/204 with empty body
             return Ok(Value::Null);
         }
 
@@ -771,7 +919,6 @@ impl XApi {
         mime: &str,
         category: &str,
     ) -> Result<String, XmasterError> {
-        // INIT
         // INIT
         let total = data.len().to_string();
         let resp = self.ctx.client.clone().oauth1(self.secrets())

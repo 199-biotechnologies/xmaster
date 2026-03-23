@@ -1,6 +1,6 @@
 use crate::context::AppContext;
 use crate::errors::XmasterError;
-use crate::output::{self, OutputFormat, Tableable};
+use crate::output::{self, CsvRenderable, OutputFormat, Tableable};
 use crate::providers::xapi::XApi;
 use serde::Serialize;
 use std::sync::Arc;
@@ -22,6 +22,20 @@ impl Tableable for FollowResult {
             if self.success { "OK" } else { "Failed" },
         ]);
         table
+    }
+}
+
+impl CsvRenderable for FollowResult {
+    fn csv_headers() -> Vec<&'static str> {
+        vec!["action", "username", "status"]
+    }
+
+    fn csv_rows(&self) -> Vec<Vec<String>> {
+        vec![vec![
+            self.action.clone(),
+            self.username.clone(),
+            if self.success { "OK" } else { "Failed" }.to_string(),
+        ]]
     }
 }
 
@@ -58,29 +72,76 @@ impl Tableable for UserList {
     }
 }
 
+impl CsvRenderable for UserList {
+    fn csv_headers() -> Vec<&'static str> {
+        vec!["username", "name", "followers", "following", "tweets", "verified"]
+    }
+
+    fn csv_rows(&self) -> Vec<Vec<String>> {
+        self.users
+            .iter()
+            .map(|u| {
+                vec![
+                    format!("@{}", u.username),
+                    u.name.clone(),
+                    u.followers.to_string(),
+                    u.following.to_string(),
+                    u.tweets.to_string(),
+                    if u.verified { "Yes" } else { "No" }.to_string(),
+                ]
+            })
+            .collect()
+    }
+}
+
+/// Print an undo hint to stderr (only in table mode).
+fn undo_hint(format: OutputFormat, message: &str) {
+    if format == OutputFormat::Table {
+        eprintln!("{message}");
+    }
+}
+
+/// Add a contextual hint when follow/unfollow fails with 403.
+fn maybe_add_hint(err: XmasterError) -> XmasterError {
+    if let XmasterError::AuthMissing { provider, ref message } = err {
+        if message.contains("403") {
+            return XmasterError::Api {
+                provider,
+                code: "forbidden",
+                message: format!(
+                    "{message}. Hint: You may already follow this user or they have blocked you"
+                ),
+            };
+        }
+    }
+    err
+}
+
 pub async fn follow(ctx: Arc<AppContext>, format: OutputFormat, username: &str) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
     let user = api.get_user_by_username(username).await?;
-    api.follow_user(&user.id).await?;
+    api.follow_user(&user.id).await.map_err(maybe_add_hint)?;
     let display = FollowResult {
         action: "follow".into(),
         username: username.to_string(),
         success: true,
     };
     output::render(format, &display, None);
+    undo_hint(format, &format!("Undo: xmaster unfollow {username}"));
     Ok(())
 }
 
 pub async fn unfollow(ctx: Arc<AppContext>, format: OutputFormat, username: &str) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
     let user = api.get_user_by_username(username).await?;
-    api.unfollow_user(&user.id).await?;
+    api.unfollow_user(&user.id).await.map_err(maybe_add_hint)?;
     let display = FollowResult {
         action: "unfollow".into(),
         username: username.to_string(),
         success: true,
     };
     output::render(format, &display, None);
+    undo_hint(format, &format!("Undo: xmaster follow {username}"));
     Ok(())
 }
 
@@ -101,7 +162,7 @@ pub async fn followers(ctx: Arc<AppContext>, format: OutputFormat, username: &st
             }
         }).collect(),
     };
-    output::render(format, &display, None);
+    output::render_csv(format, &display, None);
     Ok(())
 }
 
@@ -122,6 +183,6 @@ pub async fn following(ctx: Arc<AppContext>, format: OutputFormat, username: &st
             }
         }).collect(),
     };
-    output::render(format, &display, None);
+    output::render_csv(format, &display, None);
     Ok(())
 }

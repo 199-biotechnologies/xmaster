@@ -200,11 +200,116 @@ pub enum Commands {
     /// Show agent-readable capabilities
     AgentInfo,
 
+    /// Post a multi-tweet thread
+    Thread {
+        /// Tweet texts (one per thread tweet)
+        texts: Vec<String>,
+        /// Media file paths to attach to the first tweet
+        #[arg(long, num_args = 1..=4)]
+        media: Vec<String>,
+    },
+
+    /// Get tweet engagement metrics
+    Metrics {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Manage X lists
+    Lists {
+        #[command(subcommand)]
+        action: ListCommands,
+    },
+
+    /// Hide a reply to your tweet
+    HideReply {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Unhide a reply to your tweet
+    UnhideReply {
+        /// Tweet ID or URL
+        id: String,
+    },
+
+    /// Show API rate limit status
+    RateLimits,
+
+    /// Block a user
+    Block {
+        /// Username (without @)
+        username: String,
+    },
+
+    /// Unblock a user
+    Unblock {
+        /// Username (without @)
+        username: String,
+    },
+
+    /// Mute a user
+    Mute {
+        /// Username (without @)
+        username: String,
+    },
+
+    /// Unmute a user
+    Unmute {
+        /// Username (without @)
+        username: String,
+    },
+
     /// Self-update from GitHub releases
     Update {
         /// Check for updates without installing
         #[arg(long)]
         check: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ListCommands {
+    /// Create a new list
+    Create {
+        /// List name
+        name: String,
+        /// List description
+        #[arg(long)]
+        description: Option<String>,
+    },
+    /// Delete a list
+    Delete {
+        /// List ID
+        id: String,
+    },
+    /// Add a user to a list
+    Add {
+        /// List ID
+        list_id: String,
+        /// Username (without @)
+        username: String,
+    },
+    /// Remove a user from a list
+    Remove {
+        /// List ID
+        list_id: String,
+        /// Username (without @)
+        username: String,
+    },
+    /// View list timeline
+    Timeline {
+        /// List ID
+        list_id: String,
+        /// Number of tweets
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+    },
+    /// List your owned lists
+    Mine {
+        /// Number of results
+        #[arg(long, short, default_value = "20")]
+        count: usize,
     },
 }
 
