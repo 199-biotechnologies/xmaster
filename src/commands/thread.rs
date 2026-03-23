@@ -1,5 +1,7 @@
 use crate::context::AppContext;
 use crate::errors::XmasterError;
+use crate::intel::preflight;
+use crate::intel::store::IntelStore;
 use crate::output::{self, CsvRenderable, OutputFormat, Tableable};
 use crate::providers::xapi::XApi;
 use serde::Serialize;
@@ -11,6 +13,12 @@ struct ThreadResult {
     total: usize,
     succeeded: usize,
     failed: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook_score: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hook_grade: Option<String>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    warnings: Vec<String>,
 }
 
 impl Tableable for ThreadResult {
@@ -29,6 +37,14 @@ impl Tableable for ThreadResult {
                 "".to_string(),
                 format!("{} tweet(s) failed", self.failed),
                 "Failed".to_string(),
+            ]);
+        }
+        if let Some(score) = self.hook_score {
+            let grade = self.hook_grade.as_deref().unwrap_or("?");
+            table.add_row(vec![
+                "".to_string(),
+                format!("Hook quality: {score}/100 ({grade})"),
+                "".to_string(),
             ]);
         }
         table
@@ -64,6 +80,33 @@ pub async fn execute(
 
     let api = XApi::new(ctx.clone());
 
+    // ── Pre-flight on the hook (first tweet) ──
+    let analysis = preflight::analyze(&texts[0], Some("impressions"));
+    let mut warnings = Vec::new();
+
+    for issue in &analysis.issues {
+        if issue.severity == preflight::Severity::Critical {
+            warnings.push(format!("[CRITICAL] {}: {}", issue.code, issue.message));
+        } else if issue.severity == preflight::Severity::Warning {
+            warnings.push(format!("[WARN] {}", issue.message));
+        }
+    }
+
+    if format == OutputFormat::Table {
+        eprintln!(
+            "--- Thread hook pre-flight ({}/100, {}) ---",
+            analysis.score, analysis.grade
+        );
+        for w in &warnings {
+            eprintln!("  {w}");
+        }
+        if !analysis.suggestions.is_empty() {
+            eprintln!("  Tip: {}", analysis.suggestions[0]);
+        }
+        eprintln!("  Posting {} tweets with natural pacing...", texts.len());
+        eprintln!("---");
+    }
+
     // Upload media if provided (attach to first tweet only)
     let media_ids = if !media.is_empty() {
         let mut ids = Vec::new();
@@ -80,6 +123,12 @@ pub async fn execute(
     let mut failed = 0usize;
 
     for (i, text) in texts.iter().enumerate() {
+        // ── Natural pacing between thread tweets (1-3 seconds) ──
+        if i > 0 {
+            let jitter_ms = 1000 + (rand::random::<u64>() % 2000);
+            tokio::time::sleep(std::time::Duration::from_millis(jitter_ms)).await;
+        }
+
         let reply_to = if i == 0 {
             None
         } else {
@@ -91,7 +140,21 @@ pub async fn execute(
             .create_tweet(text, reply_to, None, tweet_media, None, None)
             .await
         {
-            Ok(resp) => posted_ids.push(resp.id),
+            Ok(resp) => {
+                // Log each tweet to store
+                if let Ok(store) = IntelStore::open() {
+                    let content_type = if i == 0 { "thread_hook" } else { "thread_reply" };
+                    let _ = store.log_post(
+                        &resp.id,
+                        text,
+                        content_type,
+                        reply_to,
+                        None,
+                        if i == 0 { Some(analysis.score as f64) } else { None },
+                    );
+                }
+                posted_ids.push(resp.id);
+            }
             Err(e) => {
                 failed += 1;
                 let remaining = texts.len() - i - 1;
@@ -111,8 +174,23 @@ pub async fn execute(
         total: texts.len(),
         succeeded: posted_ids.len(),
         failed,
-        tweet_ids: posted_ids,
+        tweet_ids: posted_ids.clone(),
+        hook_score: Some(analysis.score),
+        hook_grade: Some(analysis.grade.clone()),
+        warnings: if format == OutputFormat::Json { warnings } else { vec![] },
     };
     output::render(format, &display, None);
+
+    // Undo hint
+    if format == OutputFormat::Table && !posted_ids.is_empty() {
+        eprintln!(
+            "Delete thread: {}",
+            posted_ids
+                .iter()
+                .map(|id| format!("xmaster delete {id}"))
+                .collect::<Vec<_>>()
+                .join(" && ")
+        );
+    }
     Ok(())
 }
