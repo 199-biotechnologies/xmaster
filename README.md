@@ -342,4 +342,4 @@ MIT
 
 ---
 
-Created by [199 Biotechnologies](https://github.com/199-biotechnologies).
+Created by [Boris Djordjevic](https://x.com/longevityboris) — [199 Biotechnologies](https://github.com/199-biotechnologies) & Paperfoot AI (SG) Pte Ltd.
