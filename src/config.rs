@@ -29,6 +29,15 @@ pub struct Keys {
     pub bearer_token: String,
     #[serde(default)]
     pub xai: String,
+    // OAuth 2.0 PKCE (required for bookmarks endpoint)
+    #[serde(default)]
+    pub oauth2_client_id: String,
+    #[serde(default)]
+    pub oauth2_client_secret: String,
+    #[serde(default)]
+    pub oauth2_access_token: String,
+    #[serde(default)]
+    pub oauth2_refresh_token: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

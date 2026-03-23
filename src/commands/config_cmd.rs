@@ -3,6 +3,7 @@ use crate::context::AppContext;
 use crate::errors::XmasterError;
 use crate::output::{self, OutputFormat, Tableable};
 use crate::providers::xapi::XApi;
+use crate::providers::oauth2;
 use serde::Serialize;
 use std::sync::Arc;
 
@@ -296,5 +297,76 @@ pub async fn guide(format: OutputFormat) -> Result<(), XmasterError> {
     };
 
     output::render(format, &guide, None);
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct AuthResult {
+    status: String,
+    message: String,
+    auth_url: Option<String>,
+    next_step: Option<String>,
+}
+
+impl Tableable for AuthResult {
+    fn to_table(&self) -> comfy_table::Table {
+        let mut table = comfy_table::Table::new();
+        table.set_header(vec!["Field", "Value"]);
+        table.add_row(vec!["Status", &self.status]);
+        table.add_row(vec!["Message", &self.message]);
+        if let Some(ref url) = self.auth_url {
+            table.add_row(vec!["Auth URL", url]);
+        }
+        if let Some(ref next) = self.next_step {
+            table.add_row(vec!["Next Step", next]);
+        }
+        table
+    }
+}
+
+pub async fn auth(ctx: Arc<AppContext>, format: OutputFormat) -> Result<(), XmasterError> {
+    let client_id = &ctx.config.keys.oauth2_client_id;
+    let client_secret = &ctx.config.keys.oauth2_client_secret;
+
+    if client_id.is_empty() || client_secret.is_empty() {
+        let result = AuthResult {
+            status: "missing_credentials".into(),
+            message: "OAuth 2.0 Client ID and Secret not configured.".into(),
+            auth_url: None,
+            next_step: Some(
+                "Get them from developer.x.com → your app → Keys and tokens → OAuth 2.0 Client ID and Client Secret. \
+                Then run: xmaster config set keys.oauth2_client_id YOUR_ID && \
+                xmaster config set keys.oauth2_client_secret YOUR_SECRET".into()
+            ),
+        };
+        output::render(format, &result, None);
+        return Ok(());
+    }
+
+    // Build authorization URL with PKCE
+    let (auth_url, code_verifier) = oauth2::build_auth_url(client_id);
+
+    // Save code_verifier temporarily for the exchange step
+    let verifier_path = config::config_dir().join(".pkce_verifier");
+    std::fs::write(&verifier_path, &code_verifier)?;
+
+    let result = AuthResult {
+        status: "awaiting_authorization".into(),
+        message: "Open this URL in your browser, authorize the app, then copy the FULL redirect URL from your browser's address bar.".into(),
+        auth_url: Some(auth_url.clone()),
+        next_step: Some(format!(
+            "After authorizing, your browser will redirect to http://localhost:3000/callback?code=...&state=... \
+            Copy the 'code' value from that URL and run: xmaster config set keys.oauth2_code THE_CODE \
+            Then run: xmaster config auth-exchange"
+        )),
+    };
+
+    // Try to open the browser
+    if format == OutputFormat::Table {
+        eprintln!("Opening browser for authorization...");
+        let _ = std::process::Command::new("open").arg(&auth_url).spawn();
+    }
+
+    output::render(format, &result, None);
     Ok(())
 }

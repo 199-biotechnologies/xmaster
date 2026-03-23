@@ -453,6 +453,8 @@ pub enum ConfigCommands {
     Check,
     /// Step-by-step setup guide for X API and xAI keys
     Guide,
+    /// Authorize OAuth 2.0 (required for bookmarks)
+    Auth,
 }
 
 #[derive(Subcommand)]

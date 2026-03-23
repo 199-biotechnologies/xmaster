@@ -39,6 +39,8 @@ rand = "0.8"
 percent-encoding = "2"
 toml = "0.8"
 async-trait = "0.1"
+sha2 = "0.10"
+urlencoding = "2"
 rusqlite = { version = "0.31", features = ["bundled"] }
 
 [dev-dependencies]
