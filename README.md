@@ -47,7 +47,12 @@ brew tap 199-biotechnologies/tap
 brew install xmaster
 ```
 
-**Cargo:**
+**Cargo (crates.io):**
+```bash
+cargo install xmaster
+```
+
+**Cargo (from source):**
 ```bash
 cargo install --git https://github.com/199-biotechnologies/xmaster
 ```
