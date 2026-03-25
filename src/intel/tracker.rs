@@ -133,7 +133,7 @@ impl PostTracker {
                 has_poll INTEGER NOT NULL DEFAULT 0,
                 hashtag_count INTEGER NOT NULL DEFAULT 0,
                 hook_text TEXT,
-                posted_at TEXT NOT NULL,
+                posted_at INTEGER NOT NULL,
                 day_of_week INTEGER NOT NULL DEFAULT 0,
                 hour_of_day INTEGER NOT NULL DEFAULT 0,
                 reply_to_id TEXT,
@@ -143,7 +143,7 @@ impl PostTracker {
             CREATE TABLE IF NOT EXISTS metric_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tweet_id TEXT NOT NULL,
-                snapshot_at TEXT NOT NULL,
+                snapshot_at INTEGER NOT NULL,
                 minutes_since_post INTEGER NOT NULL DEFAULT 0,
                 likes INTEGER NOT NULL DEFAULT 0,
                 retweets INTEGER NOT NULL DEFAULT 0,
@@ -152,6 +152,16 @@ impl PostTracker {
                 bookmarks INTEGER NOT NULL DEFAULT 0,
                 quotes INTEGER NOT NULL DEFAULT 0,
                 profile_clicks INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS timing_stats (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                day_of_week INTEGER NOT NULL,
+                hour_of_day INTEGER NOT NULL,
+                content_type TEXT NOT NULL DEFAULT 'all',
+                avg_impressions REAL,
+                avg_engagement_rate REAL,
+                sample_count INTEGER NOT NULL DEFAULT 0,
+                last_updated INTEGER NOT NULL
             );",
         )
         .map_err(|e| XmasterError::Config(format!("DB init error: {e}")))?;
@@ -171,7 +181,7 @@ impl PostTracker {
     ) -> Result<(), XmasterError> {
         let metrics = fetch_tweet_metrics(ctx, tweet_id).await?;
 
-        let snapshot_at = Utc::now().to_rfc3339();
+        let snapshot_at = Utc::now().timestamp();
         self.conn
             .execute(
                 "INSERT INTO metric_snapshots
@@ -202,34 +212,32 @@ impl PostTracker {
         ctx: &crate::context::AppContext,
         hours: u32,
     ) -> Result<SnapshotSummary, XmasterError> {
-        let now_str = Utc::now().to_rfc3339();
-        let modifier = format!("-{hours} hours");
+        let now = Utc::now();
+        let now_ts = now.timestamp();
+        let cutoff = now_ts - (hours as i64 * 3600);
 
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT tweet_id, posted_at FROM posts
-                 WHERE posted_at > datetime(?1, ?2)
+                 WHERE posted_at > ?1
                  ORDER BY posted_at DESC",
             )
             .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
 
-        let rows: Vec<(String, String)> = stmt
-            .query_map(params![now_str, modifier], |row| {
-                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+        let rows: Vec<(String, i64)> = stmt
+            .query_map(params![cutoff], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?))
             })
             .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
 
-        let now = Utc::now();
         let mut snapshotted = 0u32;
         let mut errors = 0u32;
 
         for (tweet_id, posted_at) in &rows {
-            let posted = DateTime::parse_from_rfc3339(posted_at)
-                .map(|dt| dt.with_timezone(&Utc))
-                .unwrap_or(now);
+            let posted = DateTime::from_timestamp(*posted_at, 0).unwrap_or(now);
             let minutes = (now - posted).num_minutes();
 
             match self.snapshot_tweet(ctx, tweet_id, minutes).await {
@@ -374,10 +382,11 @@ impl PostTracker {
 
     pub fn check_cannibalization(&self) -> Result<Option<CannibalizationWarning>, XmasterError> {
         let now = Utc::now();
-        let now_str = now.to_rfc3339();
+        let now_ts = now.timestamp();
+        let cutoff = now_ts - 21600; // 6 hours
 
         // Find a post from the last 6 hours whose latest two snapshots show accelerating impressions
-        let result: Option<(String, String, String)> = self
+        let result: Option<(String, String, i64)> = self
             .conn
             .query_row(
                 "SELECT s1.tweet_id, p.text, p.posted_at
@@ -388,11 +397,11 @@ impl PostTracker {
                  JOIN posts p ON p.tweet_id = s1.tweet_id
                  WHERE s1.id = (SELECT MAX(id) FROM metric_snapshots
                                 WHERE tweet_id = s1.tweet_id)
-                   AND p.posted_at > datetime(?1, '-6 hours')
+                   AND p.posted_at > ?1
                    AND s1.impressions > s2.impressions * 1.5
                  ORDER BY (s1.impressions - s2.impressions) DESC
                  LIMIT 1",
-                params![now_str],
+                params![cutoff],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
             )
             .optional()
@@ -403,9 +412,7 @@ impl PostTracker {
             None => return Ok(None),
         };
 
-        let posted = DateTime::parse_from_rfc3339(&posted_at)
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap_or(now);
+        let posted = DateTime::from_timestamp(posted_at, 0).unwrap_or(now);
         let minutes_ago = (now - posted).num_minutes().max(0) as u32;
 
         // Compute current velocity from the latest snapshot
@@ -450,8 +457,8 @@ impl PostTracker {
             _ => 168,
         };
 
-        let now_str = Utc::now().to_rfc3339();
-        let modifier = format!("-{hours} hours");
+        let now_ts = Utc::now().timestamp();
+        let cutoff = now_ts - (hours * 3600);
 
         // Current period posts with latest metrics
         let mut stmt = self
@@ -467,7 +474,7 @@ impl PostTracker {
                  FROM posts p
                  LEFT JOIN metric_snapshots ms ON ms.tweet_id = p.tweet_id
                    AND ms.id = (SELECT MAX(id) FROM metric_snapshots WHERE tweet_id = p.tweet_id)
-                 WHERE p.posted_at > datetime(?1, ?2)
+                 WHERE p.posted_at > ?1
                  ORDER BY er DESC",
             )
             .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
@@ -481,7 +488,7 @@ impl PostTracker {
         }
 
         let posts: Vec<PostRow> = stmt
-            .query_map(params![now_str, modifier], |row| {
+            .query_map(params![cutoff], |row| {
                 Ok(PostRow {
                     tweet_id: row.get(0)?,
                     text: row.get(1)?,
@@ -544,7 +551,7 @@ impl PostTracker {
         let best_time = self.get_best_time(None)?;
 
         // Trend: compare to previous period
-        let prev_modifier = format!("-{} hours", hours * 2);
+        let prev_cutoff = now_ts - (hours * 2 * 3600);
         let prev_avg_er: f64 = self
             .conn
             .query_row(
@@ -558,9 +565,9 @@ impl PostTracker {
                  FROM posts p
                  LEFT JOIN metric_snapshots ms ON ms.tweet_id = p.tweet_id
                    AND ms.id = (SELECT MAX(id) FROM metric_snapshots WHERE tweet_id = p.tweet_id)
-                 WHERE p.posted_at > datetime(?1, ?2)
-                   AND p.posted_at <= datetime(?1, ?3)",
-                params![now_str, prev_modifier, modifier],
+                 WHERE p.posted_at > ?1
+                   AND p.posted_at <= ?2",
+                params![prev_cutoff, cutoff],
                 |row| row.get::<_, Option<f64>>(0),
             )
             .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?
@@ -597,7 +604,7 @@ impl PostTracker {
     // -- tracking status ------------------------------------------------------
 
     pub fn tracking_status(&self) -> Result<TrackStatus, XmasterError> {
-        let now_str = Utc::now().to_rfc3339();
+        let now_ts = Utc::now().timestamp();
 
         let mut stmt = self
             .conn
@@ -620,16 +627,16 @@ impl PostTracker {
 
         let posts: Vec<TrackedPost> = stmt
             .query_map([], |row| {
-                let last_snap: Option<String> = row.get(4)?;
-                let age_mins = last_snap.and_then(|s| {
-                    DateTime::parse_from_rfc3339(&s)
-                        .ok()
-                        .map(|dt| (Utc::now() - dt.with_timezone(&Utc)).num_minutes())
-                });
+                let last_snap: Option<i64> = row.get(4)?;
+                let age_mins = last_snap.map(|ts| (now_ts - ts) / 60);
+                let posted_ts: i64 = row.get(2)?;
+                let posted_str = DateTime::from_timestamp(posted_ts, 0)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_else(|| posted_ts.to_string());
                 Ok(TrackedPost {
                     tweet_id: row.get(0)?,
                     text_preview: row.get(1)?,
-                    posted_at: row.get(2)?,
+                    posted_at: posted_str,
                     snapshots: row.get::<_, i64>(3)? as u32,
                     last_snapshot_age_mins: age_mins,
                     latest_impressions: row.get(5)?,
@@ -650,7 +657,7 @@ impl PostTracker {
     // -- internal: refresh timing_stats table ---------------------------------
 
     fn update_timing_stats(&self) -> Result<(), XmasterError> {
-        let now = Utc::now().to_rfc3339();
+        let now = Utc::now().timestamp();
         self.conn
             .execute_batch("DELETE FROM timing_stats")
             .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;

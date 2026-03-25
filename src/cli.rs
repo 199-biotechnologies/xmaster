@@ -15,6 +15,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub json: bool,
 
+    // TODO: wire --quiet into stderr output suppression (currently unused)
     /// Suppress non-essential output
     #[arg(long, global = true)]
     pub quiet: bool,
@@ -497,20 +498,19 @@ pub enum BookmarkCommands {
     Stats,
 }
 
-/// Parse a tweet ID from a URL or raw ID string
+/// Parse a tweet ID from a URL or raw ID string.
+/// Handles URLs like `.../status/12345/photo/1` by finding the segment after "status".
 pub fn parse_tweet_id(input: &str) -> String {
     let input = input.trim();
     if input.contains("x.com/") || input.contains("twitter.com/") {
-        // Filter empty segments (handles trailing slashes) and take the last non-empty one
-        if let Some(id) = input.split('/').filter(|s| !s.is_empty()).last() {
-            // Strip query params (?s=20 etc.)
-            let id = id.split('?').next().unwrap_or(id);
-            if !id.is_empty() {
-                // Warn if the extracted segment contains non-digit chars
-                if !id.chars().all(|c| c.is_ascii_digit()) {
-                    eprintln!("Warning: extracted tweet ID '{id}' contains non-numeric characters");
+        let parts: Vec<&str> = input.split('/').filter(|s| !s.is_empty()).collect();
+        // Find the segment immediately after "status"
+        if let Some(pos) = parts.iter().position(|&p| p == "status") {
+            if let Some(id_part) = parts.get(pos + 1) {
+                let id = id_part.split('?').next().unwrap_or(id_part);
+                if !id.is_empty() && id.chars().all(|c| c.is_ascii_digit()) {
+                    return id.to_string();
                 }
-                return id.to_string();
             }
         }
     }
@@ -569,5 +569,21 @@ mod tests {
     #[test]
     fn whitespace_trimmed() {
         assert_eq!(parse_tweet_id("  1234567890  "), "1234567890");
+    }
+
+    #[test]
+    fn url_with_photo_suffix() {
+        assert_eq!(
+            parse_tweet_id("https://x.com/user/status/1234567890/photo/1"),
+            "1234567890"
+        );
+    }
+
+    #[test]
+    fn url_with_video_suffix() {
+        assert_eq!(
+            parse_tweet_id("https://x.com/user/status/9876543210/video/1"),
+            "9876543210"
+        );
     }
 }

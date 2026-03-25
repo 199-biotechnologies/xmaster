@@ -170,6 +170,15 @@ pub async fn execute(
         }
     }
 
+    // If ALL tweets failed, return an error instead of a success envelope
+    if posted_ids.is_empty() && !texts.is_empty() {
+        return Err(XmasterError::Api {
+            provider: "x",
+            code: "thread_failed",
+            message: format!("Thread failed: 0/{} tweets posted", texts.len()),
+        });
+    }
+
     let display = ThreadResult {
         total: texts.len(),
         succeeded: posted_ids.len(),

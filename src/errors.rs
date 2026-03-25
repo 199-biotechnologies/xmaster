@@ -82,9 +82,9 @@ impl XmasterError {
         match self {
             Self::AuthMissing { provider, .. } => {
                 if *provider == "xai" {
-                    "Set XMASTER_XAI_KEY env var or run: xmaster config set keys.xai <key>".into()
+                    "Set XMASTER_KEYS__XAI env var or run: xmaster config set keys.xai <key>".into()
                 } else {
-                    "Set X API credentials via env vars (XMASTER_API_KEY, etc.) or run: xmaster config set keys.api_key <key>".into()
+                    "Set X API credentials via env vars (XMASTER_KEYS__API_KEY, etc.) or run: xmaster config set keys.api_key <key>".into()
                 }
             }
             Self::RateLimited { reset_at, .. } => {

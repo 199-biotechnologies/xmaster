@@ -154,6 +154,12 @@ pub async fn set(format: OutputFormat, key: &str, value: &str) -> Result<(), Xma
         .map_err(|e| XmasterError::Config(format!("Failed to serialize config: {e}")))?;
     std::fs::write(&path, toml_str)?;
 
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+    }
+
     let display = ConfigSetResult {
         key: key.to_string(),
         success: true,

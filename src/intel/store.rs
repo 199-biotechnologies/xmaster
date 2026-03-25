@@ -14,7 +14,7 @@ pub struct PostRecord {
     pub tweet_id: String,
     pub text: String,
     pub content_type: String,
-    pub posted_at: String,
+    pub posted_at: i64,
     pub preflight_score: Option<f64>,
     pub latest_metrics: Option<SnapshotRecord>,
 }
@@ -89,7 +89,7 @@ impl IntelStore {
                 has_poll        BOOLEAN NOT NULL DEFAULT 0,
                 hashtag_count   INTEGER NOT NULL DEFAULT 0,
                 hook_text       TEXT,
-                posted_at       TEXT NOT NULL,
+                posted_at       INTEGER NOT NULL,
                 day_of_week     INTEGER NOT NULL,
                 hour_of_day     INTEGER NOT NULL,
                 reply_to_id     TEXT,
@@ -100,7 +100,7 @@ impl IntelStore {
             CREATE TABLE IF NOT EXISTS metric_snapshots (
                 id                 INTEGER PRIMARY KEY AUTOINCREMENT,
                 tweet_id           TEXT NOT NULL REFERENCES posts(tweet_id),
-                snapshot_at        TEXT NOT NULL,
+                snapshot_at        INTEGER NOT NULL,
                 minutes_since_post INTEGER NOT NULL,
                 likes              INTEGER NOT NULL DEFAULT 0,
                 retweets           INTEGER NOT NULL DEFAULT 0,
@@ -117,7 +117,7 @@ impl IntelStore {
                 target_tweet_id  TEXT,
                 target_user_id   TEXT,
                 target_username  TEXT,
-                performed_at     TEXT NOT NULL,
+                performed_at     INTEGER NOT NULL,
                 got_reply_back   BOOLEAN DEFAULT NULL,
                 target_followers INTEGER
             );
@@ -130,7 +130,7 @@ impl IntelStore {
                 avg_impressions     REAL,
                 avg_engagement_rate REAL,
                 sample_count        INTEGER NOT NULL DEFAULT 0,
-                last_updated        TEXT NOT NULL
+                last_updated        INTEGER NOT NULL
             );
             ",
         )?;
@@ -150,7 +150,7 @@ impl IntelStore {
         preflight_score: Option<f64>,
     ) -> Result<(), rusqlite::Error> {
         let now = Utc::now();
-        let posted_at = now.to_rfc3339();
+        let posted_at = now.timestamp();
         let day_of_week = now.weekday().num_days_from_monday() as i32; // 0=Mon
         let hour_of_day = now.hour() as i32;
         let char_count = text.len() as i32;
@@ -196,7 +196,7 @@ impl IntelStore {
         profile_clicks: i64,
         minutes_since_post: i64,
     ) -> Result<(), rusqlite::Error> {
-        let snapshot_at = Utc::now().to_rfc3339();
+        let snapshot_at = Utc::now().timestamp();
         self.conn.execute(
             "INSERT INTO metric_snapshots
                 (tweet_id, snapshot_at, minutes_since_post, likes, retweets, replies,
@@ -227,7 +227,7 @@ impl IntelStore {
         target_username: Option<&str>,
         target_followers: Option<i64>,
     ) -> Result<(), rusqlite::Error> {
-        let performed_at = Utc::now().to_rfc3339();
+        let performed_at = Utc::now().timestamp();
         self.conn.execute(
             "INSERT INTO engagement_actions
                 (action_type, target_tweet_id, target_user_id, target_username,
@@ -399,23 +399,23 @@ impl IntelStore {
 
     /// Posts in the last 1h, 6h, 24h and whether any recent post is accelerating.
     pub fn get_recent_post_velocity(&self) -> Result<RecentVelocity, rusqlite::Error> {
-        let now = Utc::now().to_rfc3339();
+        let now = Utc::now().timestamp();
 
         let posts_1h: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM posts
-             WHERE posted_at > datetime(?1, '-1 hour')",
+             WHERE posted_at > ?1 - 3600",
             params![now],
             |r| r.get(0),
         )?;
         let posts_6h: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM posts
-             WHERE posted_at > datetime(?1, '-6 hours')",
+             WHERE posted_at > ?1 - 21600",
             params![now],
             |r| r.get(0),
         )?;
         let posts_24h: i64 = self.conn.query_row(
             "SELECT COUNT(*) FROM posts
-             WHERE posted_at > datetime(?1, '-24 hours')",
+             WHERE posted_at > ?1 - 86400",
             params![now],
             |r| r.get(0),
         )?;
@@ -432,7 +432,7 @@ impl IntelStore {
                  JOIN posts p ON p.tweet_id = s1.tweet_id
                  WHERE s1.id = (SELECT MAX(id) FROM metric_snapshots
                                 WHERE tweet_id = s1.tweet_id)
-                   AND p.posted_at > datetime(?1, '-24 hours')
+                   AND p.posted_at > ?1 - 86400
                    AND s1.impressions > s2.impressions * 1.5
                  ORDER BY (s1.impressions - s2.impressions) DESC
                  LIMIT 1",
@@ -451,7 +451,7 @@ impl IntelStore {
 
     /// Recalculate the `timing_stats` table from raw posts + snapshots.
     pub fn update_timing_stats(&self) -> Result<(), rusqlite::Error> {
-        let now = Utc::now().to_rfc3339();
+        let now = Utc::now().timestamp();
         let tx = self.conn.unchecked_transaction()?;
         tx.execute_batch("DELETE FROM timing_stats")?;
         tx.execute(

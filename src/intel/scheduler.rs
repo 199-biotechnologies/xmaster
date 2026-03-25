@@ -280,18 +280,27 @@ impl PostScheduler {
         let now = Utc::now().timestamp();
         let grace_cutoff = now - (grace_minutes * 60);
 
-        // Fetch all due pending posts
+        // Phase 1: Atomically claim due posts (prevents duplicate posts from concurrent runs)
+        self.conn
+            .execute(
+                "UPDATE scheduled_posts SET status = 'firing'
+                 WHERE status = 'pending' AND scheduled_at <= ?1",
+                params![now],
+            )
+            .map_err(|e| XmasterError::Config(e.to_string()))?;
+
+        // Phase 2: Fetch claimed posts
         let mut stmt = self
             .conn
             .prepare(
                 "SELECT id, content, scheduled_at, reply_to_id, quote_id, media_paths, retry_count
                  FROM scheduled_posts
-                 WHERE status = 'pending' AND scheduled_at <= ?1",
+                 WHERE status = 'firing'",
             )
             .map_err(|e| XmasterError::Config(e.to_string()))?;
 
         let due_posts: Vec<(String, String, i64, Option<String>, Option<String>, Option<String>, i32)> =
-            stmt.query_map(params![now], |row| {
+            stmt.query_map([], |row| {
                 Ok((
                     row.get(0)?,
                     row.get(1)?,
@@ -331,10 +340,48 @@ impl PostScheduler {
                 continue;
             }
 
-            // Parse media IDs from JSON if present
-            let media_ids: Option<Vec<String>> = media_json.as_ref().and_then(|j| {
-                serde_json::from_str(j).ok()
-            });
+            // Upload media files and collect media IDs (stored as file paths, not IDs)
+            let media_upload = if let Some(paths_json) = media_json {
+                let paths: Vec<String> = serde_json::from_str(paths_json).unwrap_or_default();
+                if !paths.is_empty() {
+                    let mut ids = Vec::new();
+                    let mut upload_err = None;
+                    for path in &paths {
+                        match api.upload_media(path).await {
+                            Ok(mid) => ids.push(mid),
+                            Err(e) => {
+                                upload_err = Some(e);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(e) = upload_err {
+                        Err(e)
+                    } else {
+                        Ok(Some(ids))
+                    }
+                } else {
+                    Ok(None)
+                }
+            } else {
+                Ok(None)
+            };
+
+            let media_ids = match media_upload {
+                Ok(ids) => ids,
+                Err(e) => {
+                    self.mark_failed(id, &format!("Media upload failed: {e}"))?;
+                    result.failed += 1;
+                    result.posts.push(FiredPost {
+                        id: id.clone(),
+                        content_preview: preview,
+                        status: "failed".to_string(),
+                        tweet_id: None,
+                        error: Some(format!("Media upload failed: {e}")),
+                    });
+                    continue;
+                }
+            };
 
             // Attempt to post
             let post_result = api

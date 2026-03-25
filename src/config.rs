@@ -100,7 +100,7 @@ pub fn load_config() -> Result<AppConfig, XmasterError> {
     }
 
     let config: AppConfig = figment
-        .merge(Env::prefixed("XMASTER_").split("_"))
+        .merge(Env::prefixed("XMASTER_").split("__"))
         .extract()
         .map_err(|e| XmasterError::Config(e.to_string()))?;
     Ok(config)

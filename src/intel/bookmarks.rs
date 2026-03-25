@@ -18,7 +18,7 @@ pub struct BookmarkRecord {
     pub author_name: Option<String>,
     pub text: String,
     pub created_at: Option<String>,
-    pub bookmarked_at: String,
+    pub bookmarked_at: i64,
     pub likes: i64,
     pub retweets: i64,
     pub replies: i64,
@@ -95,7 +95,7 @@ impl BookmarkStore {
                 author_name TEXT,
                 text TEXT NOT NULL,
                 created_at TEXT,
-                bookmarked_at TEXT NOT NULL,
+                bookmarked_at INTEGER NOT NULL,
                 likes INTEGER DEFAULT 0,
                 retweets INTEGER DEFAULT 0,
                 replies INTEGER DEFAULT 0,
@@ -113,7 +113,7 @@ impl BookmarkStore {
 
             CREATE TABLE IF NOT EXISTS bookmark_sync_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                synced_at TEXT NOT NULL,
+                synced_at INTEGER NOT NULL,
                 new_count INTEGER NOT NULL,
                 total_count INTEGER NOT NULL
             );
@@ -127,7 +127,7 @@ impl BookmarkStore {
 
     /// Ingest bookmarks fetched from the X API. Idempotent — duplicates are ignored.
     pub fn sync(&self, xapi_bookmarks: Vec<TweetData>) -> Result<SyncResult, XmasterError> {
-        let now = Utc::now().to_rfc3339();
+        let now = Utc::now().timestamp();
         let mut new_count: u32 = 0;
 
         for tweet in &xapi_bookmarks {
@@ -306,7 +306,10 @@ impl BookmarkStore {
             let preview: String = bm.text.chars().take(80).collect();
             let preview = preview.replace('\n', " ");
             md.push_str(&format!("## @{} — \"{preview}...\"\n", bm.author_username));
-            md.push_str(&format!("- Saved: {}\n", &bm.bookmarked_at[..10]));
+            let saved_date = chrono::DateTime::from_timestamp(bm.bookmarked_at, 0)
+                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                .unwrap_or_else(|| bm.bookmarked_at.to_string());
+            md.push_str(&format!("- Saved: {saved_date}\n"));
             md.push_str(&format!(
                 "- Engagement: {} likes, {} retweets\n",
                 bm.likes, bm.retweets
@@ -378,7 +381,12 @@ impl BookmarkStore {
             .query_row(
                 "SELECT bookmarked_at FROM bookmarks ORDER BY bookmarked_at ASC LIMIT 1",
                 [],
-                |r| r.get(0),
+                |r| {
+                    let ts: i64 = r.get(0)?;
+                    Ok(chrono::DateTime::from_timestamp(ts, 0)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| ts.to_string()))
+                },
             )
             .ok();
 
@@ -387,7 +395,12 @@ impl BookmarkStore {
             .query_row(
                 "SELECT bookmarked_at FROM bookmarks ORDER BY bookmarked_at DESC LIMIT 1",
                 [],
-                |r| r.get(0),
+                |r| {
+                    let ts: i64 = r.get(0)?;
+                    Ok(chrono::DateTime::from_timestamp(ts, 0)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_else(|| ts.to_string()))
+                },
             )
             .ok();
 
@@ -404,8 +417,7 @@ impl BookmarkStore {
 
     /// Bookmarks from the last N days, grouped by author.
     pub fn get_digest(&self, days: u32) -> Result<BookmarkDigest, XmasterError> {
-        let now = Utc::now().to_rfc3339();
-        let modifier = format!("-{days} days");
+        let cutoff = Utc::now().timestamp() - (days as i64 * 86400);
 
         let mut stmt = self
             .conn
@@ -414,13 +426,13 @@ impl BookmarkStore {
                         bookmarked_at, likes, retweets, replies, has_media, has_link,
                         tags, notes, read
                  FROM bookmarks
-                 WHERE bookmarked_at > datetime(?1, ?2)
+                 WHERE bookmarked_at > ?1
                  ORDER BY author_username, bookmarked_at DESC",
             )
             .map_err(|e| XmasterError::Config(format!("Digest prepare failed: {e}")))?;
 
         let rows: Vec<BookmarkRecord> = stmt
-            .query_map(params![now, modifier], Self::row_to_record)
+            .query_map(params![cutoff], Self::row_to_record)
             .map_err(|e| XmasterError::Config(format!("Digest query failed: {e}")))?
             .collect::<Result<Vec<_>, _>>()
             .map_err(|e| XmasterError::Config(format!("Digest collect failed: {e}")))?;

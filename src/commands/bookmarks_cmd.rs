@@ -72,6 +72,8 @@ struct ExportDisplay {
     count: usize,
     output: String,
     message: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    content: Option<String>,
 }
 
 impl Tableable for ExportDisplay {
@@ -171,7 +173,9 @@ fn records_to_list(records: Vec<BookmarkRecord>) -> BookmarkList {
             author: format!("@{}", r.author_username),
             text: r.text,
             likes: r.likes,
-            saved: r.bookmarked_at[..10].to_string(),
+            saved: chrono::DateTime::from_timestamp(r.bookmarked_at, 0)
+                .map(|dt| dt.format("%Y-%m-%d").to_string())
+                .unwrap_or_else(|| r.bookmarked_at.to_string()),
         })
         .collect();
     BookmarkList { bookmarks, total }
@@ -201,9 +205,18 @@ pub async fn list(
         }
         output::render(format, &records_to_list(records), None);
     } else {
-        // Live from X API
+        // Live from X API — bookmarks require OAuth 2.0
+        let token = crate::providers::oauth2::ensure_oauth2_token(&ctx.config).await?;
         let api = XApi::new(ctx.clone());
-        let tweets = api.get_bookmarks(count).await?;
+        let user_id = api.get_me().await?.id;
+        let per_page = count.min(100);
+        let url = format!(
+            "https://api.x.com/2/users/{}/bookmarks?max_results={}&tweet.fields=created_at,public_metrics,author_id&expansions=author_id&user.fields=username,name",
+            user_id, per_page
+        );
+        let json = crate::providers::oauth2::oauth2_get(&url, &token).await?;
+        let tweets = parse_bookmark_response(&json);
+
         let records: Vec<BookmarkRecord> = tweets
             .into_iter()
             .map(|t| {
@@ -216,7 +229,7 @@ pub async fn list(
                     author_name: None,
                     text: t.text,
                     created_at: t.created_at.clone(),
-                    bookmarked_at: t.created_at.unwrap_or_default(),
+                    bookmarked_at: chrono::Utc::now().timestamp(),
                     likes: metrics.map(|m| m.like_count as i64).unwrap_or(0),
                     retweets: metrics.map(|m| m.retweet_count as i64).unwrap_or(0),
                     replies: metrics.map(|m| m.reply_count as i64).unwrap_or(0),
@@ -398,27 +411,45 @@ pub async fn export(
     let count = records.len();
     let md = BookmarkStore::export_markdown(&records);
 
-    // Mark exported bookmarks as read
-    for r in &records {
-        store.mark_read(&r.tweet_id)?;
-    }
-
+    // Write output first, THEN mark as read (so bookmarks aren't lost if write fails)
     let output_desc = match output_path {
         Some(path) => {
             std::fs::write(path, &md)?;
             path.to_string()
         }
         None => {
+            if format == OutputFormat::Json {
+                // For JSON output, embed markdown in the JSON envelope instead of
+                // printing raw markdown before JSON
+                let display = ExportDisplay {
+                    count,
+                    output: "json".to_string(),
+                    message: format!("Exported {count} bookmarks (marked as read)"),
+                    content: Some(md.clone()),
+                };
+                // Mark as read only after successful render
+                for r in &records {
+                    store.mark_read(&r.tweet_id)?;
+                }
+                output::render(format, &display, None);
+                return Ok(());
+            }
             println!("{md}");
             "stdout".to_string()
         }
     };
 
-    if output_path.is_some() || format == OutputFormat::Json {
+    // Mark exported bookmarks as read only after successful write
+    for r in &records {
+        store.mark_read(&r.tweet_id)?;
+    }
+
+    if output_path.is_some() {
         let display = ExportDisplay {
             count,
             output: output_desc,
             message: format!("Exported {count} bookmarks (marked as read)"),
+            content: None,
         };
         output::render(format, &display, None);
     }
