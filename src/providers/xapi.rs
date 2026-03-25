@@ -683,9 +683,39 @@ impl XApi {
         user_id: &str,
         count: usize,
     ) -> Result<Vec<TweetData>, XmasterError> {
+        self.get_user_mentions_since(user_id, count, None).await
+    }
+
+    pub async fn get_user_mentions_since(
+        &self,
+        user_id: &str,
+        count: usize,
+        since_id: Option<&str>,
+    ) -> Result<Vec<TweetData>, XmasterError> {
         let max = count.clamp(5, 100);
+        let since_param = since_id
+            .map(|id| format!("&since_id={id}"))
+            .unwrap_or_default();
         let url = format!(
-            "{BASE}/users/{user_id}/mentions?max_results={max}&{tf}&{exp}&{uf}",
+            "{BASE}/users/{user_id}/mentions?max_results={max}&{tf}&{exp}&{uf}{since_param}",
+            tf = Self::tweet_fields(),
+            exp = Self::tweet_expansions(),
+            uf = Self::user_fields_param(),
+        );
+        let (mut tweets, includes) =
+            self.request_list::<TweetData>(Method::GET, &url, None).await?;
+        Self::merge_authors(&mut tweets, &includes);
+        Ok(tweets)
+    }
+
+    pub async fn get_home_timeline(
+        &self,
+        count: usize,
+    ) -> Result<Vec<TweetData>, XmasterError> {
+        let user_id = self.get_authenticated_user_id().await?;
+        let max = count.clamp(1, 100);
+        let url = format!(
+            "{BASE}/users/{user_id}/reverse_chronological_timeline?max_results={max}&{tf}&{exp}&{uf}",
             tf = Self::tweet_fields(),
             exp = Self::tweet_expansions(),
             uf = Self::user_fields_param(),
@@ -885,6 +915,23 @@ impl XApi {
         let is_video = mime.starts_with("video/");
         let category = if is_video { "tweet_video" } else { "tweet_image" };
 
+        // Validate file size against Twitter limits
+        let max_size = if is_video {
+            512 * 1024 * 1024
+        } else if mime == "image/gif" {
+            15 * 1024 * 1024
+        } else {
+            5 * 1024 * 1024
+        };
+        if file_bytes.len() > max_size {
+            return Err(XmasterError::Media(format!(
+                "File too large: {}MB (max {}MB for {})",
+                file_bytes.len() / 1024 / 1024,
+                max_size / 1024 / 1024,
+                if is_video { "video" } else { "image" },
+            )));
+        }
+
         // For small images, use simple upload
         if !is_video && file_bytes.len() < 5_000_000 {
             return self.simple_upload(&file_bytes, &file_name).await;
@@ -956,7 +1003,11 @@ impl XApi {
 
         // APPEND in 1MB chunks
         let chunk_size = 1024 * 1024;
+        let total_chunks = (data.len() + chunk_size - 1) / chunk_size;
         for (i, chunk) in data.chunks(chunk_size).enumerate() {
+            if data.len() > 5_000_000 {
+                eprintln!("  Uploading chunk {}/{} ...", i + 1, total_chunks);
+            }
             let b64_chunk = base64::engine::general_purpose::STANDARD.encode(chunk);
             let seg = i.to_string();
 
@@ -1066,5 +1117,39 @@ impl XApi {
                 }
             }
         }
+    }
+
+    /// Set alt text on an uploaded media item for accessibility.
+    pub async fn set_media_alt_text(
+        &self,
+        media_id: &str,
+        alt_text: &str,
+    ) -> Result<(), XmasterError> {
+        self.require_auth()?;
+
+        let body = json!({
+            "media_id": media_id,
+            "alt_text": { "text": alt_text }
+        });
+
+        let resp = self
+            .ctx
+            .client
+            .clone()
+            .oauth1(self.secrets())
+            .post("https://upload.twitter.com/1.1/media/metadata/create.json")
+            .header("Content-Type", "application/json")
+            .body(serde_json::to_string(&body)?)
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            return Err(XmasterError::Media(format!(
+                "Failed to set alt text: {text}"
+            )));
+        }
+
+        Ok(())
     }
 }

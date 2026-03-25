@@ -93,10 +93,142 @@ impl CsvRenderable for MetricsDisplay {
     }
 }
 
+#[derive(Serialize)]
+struct MetricsRow {
+    tweet_id: String,
+    impressions: u64,
+    likes: u64,
+    retweets: u64,
+    replies: u64,
+    quotes: u64,
+    bookmarks: u64,
+    profile_clicks: u64,
+    url_clicks: u64,
+}
+
+#[derive(Serialize)]
+struct MetricsBatch {
+    rows: Vec<MetricsRow>,
+}
+
+impl Tableable for MetricsBatch {
+    fn to_table(&self) -> comfy_table::Table {
+        let mut table = comfy_table::Table::new();
+        table.set_header(vec![
+            "Tweet ID", "Impressions", "Likes", "RTs", "Replies", "Quotes", "Bookmarks",
+            "Profile Clicks", "URL Clicks",
+        ]);
+        for r in &self.rows {
+            table.add_row(vec![
+                r.tweet_id.clone(),
+                r.impressions.to_string(),
+                r.likes.to_string(),
+                r.retweets.to_string(),
+                r.replies.to_string(),
+                r.quotes.to_string(),
+                r.bookmarks.to_string(),
+                r.profile_clicks.to_string(),
+                r.url_clicks.to_string(),
+            ]);
+        }
+        table
+    }
+}
+
+impl CsvRenderable for MetricsBatch {
+    fn csv_headers() -> Vec<&'static str> {
+        vec![
+            "tweet_id", "impressions", "likes", "retweets", "replies", "quotes", "bookmarks",
+            "profile_clicks", "url_clicks",
+        ]
+    }
+    fn csv_rows(&self) -> Vec<Vec<String>> {
+        self.rows
+            .iter()
+            .map(|r| {
+                vec![
+                    r.tweet_id.clone(),
+                    r.impressions.to_string(),
+                    r.likes.to_string(),
+                    r.retweets.to_string(),
+                    r.replies.to_string(),
+                    r.quotes.to_string(),
+                    r.bookmarks.to_string(),
+                    r.profile_clicks.to_string(),
+                    r.url_clicks.to_string(),
+                ]
+            })
+            .collect()
+    }
+}
+
 fn oauth_secrets(ctx: &AppContext) -> reqwest_oauth1::Secrets<'_> {
     let k = &ctx.config.keys;
     reqwest_oauth1::Secrets::new(&k.api_key, &k.api_secret)
         .token(&k.access_token, &k.access_token_secret)
+}
+
+pub async fn execute_batch(
+    ctx: Arc<AppContext>,
+    format: OutputFormat,
+    ids: &[String],
+) -> Result<(), XmasterError> {
+    if ids.is_empty() {
+        return Err(XmasterError::Config("No tweet IDs provided".into()));
+    }
+    if ids.len() == 1 {
+        return execute(ctx, format, &ids[0]).await;
+    }
+
+    if !ctx.config.has_x_auth() {
+        return Err(XmasterError::AuthMissing {
+            provider: "x",
+            message: "X API credentials not configured".into(),
+        });
+    }
+
+    let mut rows = Vec::new();
+    for id in ids {
+        let tweet_id = parse_tweet_id(id);
+        let url = format!(
+            "https://api.x.com/2/tweets/{tweet_id}?tweet.fields=public_metrics,non_public_metrics,organic_metrics"
+        );
+        let resp = ctx
+            .client
+            .clone()
+            .oauth1(oauth_secrets(&ctx))
+            .get(&url)
+            .send()
+            .await?;
+
+        let status = resp.status();
+        if !status.is_success() {
+            let text = resp.text().await.unwrap_or_default();
+            eprintln!("Warning: Failed to fetch {tweet_id}: HTTP {status}: {text}");
+            continue;
+        }
+
+        let envelope: ApiEnvelope = resp.json().await?;
+        if let Some(tweet) = envelope.data {
+            let public = tweet.public_metrics.unwrap_or_default();
+            let non_public = tweet.non_public_metrics.unwrap_or_default();
+            rows.push(MetricsRow {
+                tweet_id: tweet.id,
+                impressions: public.impression_count,
+                likes: public.like_count,
+                retweets: public.retweet_count,
+                replies: public.reply_count,
+                quotes: public.quote_count,
+                bookmarks: public.bookmark_count,
+                profile_clicks: non_public.user_profile_clicks,
+                url_clicks: non_public.url_link_clicks,
+            });
+        }
+    }
+
+    let batch = MetricsBatch { rows };
+    output::render_csv(format, &batch, None);
+    Ok(())
 }
 
 pub async fn execute(

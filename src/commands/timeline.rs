@@ -90,17 +90,13 @@ pub async fn timeline(
     count: usize,
 ) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
-    let user_id = match user {
+    let tweets = match user {
         Some(username) => {
             let u = api.get_user_by_username(username).await?;
-            u.id
+            api.get_user_tweets(&u.id, count).await?
         }
-        None => api.get_authenticated_user_id().await?,
+        None => api.get_home_timeline(count).await?,
     };
-    // TODO: Pagination — when xapi exposes next_token from get_user_tweets(),
-    // loop here while next_token.is_some() && pages < max_pages, accumulating
-    // tweets across pages. The --all / --max-pages flags will be wired in cli.rs.
-    let tweets = api.get_user_tweets(&user_id, count).await?;
     output::render_csv(format, &tweets_to_list(tweets), None);
     Ok(())
 }
@@ -109,12 +105,11 @@ pub async fn mentions(
     ctx: Arc<AppContext>,
     format: OutputFormat,
     count: usize,
+    since_id: Option<&str>,
 ) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
     let user_id = api.get_authenticated_user_id().await?;
-    // TODO: Pagination — same pattern as timeline(): loop with next_token
-    // from get_user_mentions() when --all is passed.
-    let tweets = api.get_user_mentions(&user_id, count).await?;
+    let tweets = api.get_user_mentions_since(&user_id, count, since_id).await?;
     output::render_csv(format, &tweets_to_list(tweets), None);
     Ok(())
 }

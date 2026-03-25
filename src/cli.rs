@@ -14,11 +14,6 @@ pub struct Cli {
     /// Output as JSON (auto-enabled when piped)
     #[arg(long, global = true)]
     pub json: bool,
-
-    // TODO: wire --quiet into stderr output suppression (currently unused)
-    /// Suppress non-essential output
-    #[arg(long, global = true)]
-    pub quiet: bool,
 }
 
 #[derive(Subcommand)]
@@ -119,6 +114,9 @@ pub enum Commands {
         /// Number of mentions
         #[arg(long, short, default_value = "10")]
         count: usize,
+        /// Only show mentions after this tweet ID
+        #[arg(long)]
+        since_id: Option<String>,
     },
 
     /// Search tweets (X API v2)
@@ -209,10 +207,21 @@ pub enum Commands {
         media: Vec<String>,
     },
 
+    /// Reply to a tweet (shorthand for post --reply-to)
+    Reply {
+        /// Tweet ID or URL to reply to
+        id: String,
+        /// Reply text
+        text: String,
+        /// Media file paths
+        #[arg(long, num_args = 1..=4)]
+        media: Vec<String>,
+    },
+
     /// Get tweet engagement metrics
     Metrics {
-        /// Tweet ID or URL
-        id: String,
+        /// Tweet ID(s) or URL(s)
+        ids: Vec<String>,
     },
 
     /// Manage X lists

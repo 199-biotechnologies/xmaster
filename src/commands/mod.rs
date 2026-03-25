@@ -51,7 +51,7 @@ pub async fn dispatch(
             DmCommands::Thread { id, count } => dm::thread(ctx, format, id, *count).await,
         },
         Commands::Timeline { user, count } => timeline::timeline(ctx, format, user.as_deref(), *count).await,
-        Commands::Mentions { count } => timeline::mentions(ctx, format, *count).await,
+        Commands::Mentions { count, since_id } => timeline::mentions(ctx, format, *count, since_id.as_deref()).await,
         Commands::Search { query, mode, count } => search::execute(ctx, format, query, mode, *count).await,
         Commands::SearchAi { query, count, from_date, to_date } => {
             search_ai::execute(ctx, format, query, *count, from_date.as_deref(), to_date.as_deref()).await
@@ -82,7 +82,10 @@ pub async fn dispatch(
         }
         Commands::Update { check } => update::execute(*check).await,
         Commands::Thread { texts, media } => thread::execute(ctx, format, texts, media).await,
-        Commands::Metrics { id } => metrics::execute(ctx, format, id).await,
+        Commands::Reply { id, text, media } => {
+            post::execute(ctx, format, text, Some(id.as_str()), None, media, None, 1440).await
+        }
+        Commands::Metrics { ids } => metrics::execute_batch(ctx, format, ids).await,
         Commands::Lists { action } => match action {
             ListCommands::Create { name, description } => {
                 lists::create(ctx, format, name, description.as_deref()).await
