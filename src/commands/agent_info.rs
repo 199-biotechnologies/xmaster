@@ -77,25 +77,39 @@ pub fn execute(format: OutputFormat) {
         version: env!("CARGO_PKG_VERSION").into(),
         description: "Enterprise-grade X/Twitter CLI with built-in algorithm intelligence".into(),
         commands: vec![
-            "post".into(), "delete".into(), "like".into(), "unlike".into(),
-            "retweet".into(), "unretweet".into(), "bookmark".into(), "unbookmark".into(),
-            "follow".into(), "unfollow".into(), "dm send".into(), "dm inbox".into(),
-            "dm thread".into(), "timeline".into(), "mentions".into(), "search".into(),
+            // Reading posts (use 'read' as the primary single-post lookup)
+            "read".into(), "replies".into(), "metrics".into(),
+            "timeline".into(), "mentions".into(), "search".into(),
             "search-ai".into(), "trending".into(), "user".into(), "me".into(),
+            "followers".into(), "following".into(),
+            // Posting
+            "post".into(), "reply".into(), "thread".into(), "delete".into(),
+            // Engagement
+            "like".into(), "unlike".into(),
+            "retweet".into(), "unretweet".into(), "bookmark".into(), "unbookmark".into(),
+            "follow".into(), "unfollow".into(),
+            // Moderation
+            "hide-reply".into(), "unhide-reply".into(), "block".into(), "unblock".into(),
+            "mute".into(), "unmute".into(),
+            // DMs
+            "dm send".into(), "dm inbox".into(), "dm thread".into(),
+            // Bookmarks
             "bookmarks list".into(), "bookmarks sync".into(), "bookmarks search".into(),
             "bookmarks export".into(), "bookmarks digest".into(), "bookmarks stats".into(),
-            "followers".into(), "following".into(),
-            "thread".into(), "metrics".into(), "lists".into(),
-            "hide-reply".into(), "unhide-reply".into(), "block".into(), "unblock".into(),
-            "mute".into(), "unmute".into(), "rate-limits".into(),
-            "analyze".into(), "track run".into(), "track status".into(),
+            // Lists
+            "lists".into(),
+            // Intelligence
+            "analyze".into(), "engage recommend".into(),
+            "track run".into(), "track status".into(),
             "report daily".into(), "report weekly".into(),
             "suggest best-time".into(), "suggest next-post".into(),
+            // Scheduling
             "schedule add".into(), "schedule list".into(), "schedule cancel".into(),
             "schedule reschedule".into(), "schedule fire".into(), "schedule setup".into(),
-            "engage recommend".into(),
+            // System
             "config show".into(), "config set".into(), "config check".into(),
-            "agent-info".into(), "update".into(),
+            "config web-login".into(),
+            "rate-limits".into(), "agent-info".into(), "update".into(),
         ],
         capabilities: vec![
             "tweet_crud".into(), "engagement".into(), "social_graph".into(),
