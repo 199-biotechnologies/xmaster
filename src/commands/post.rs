@@ -51,29 +51,32 @@ pub async fn execute(
 ) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
 
-    // ── Pre-flight analysis (runs silently, built into every post) ──
+    // ── Pre-flight analysis (skip for replies — scoring is tuned for standalone posts) ──
+    let is_reply = reply_to.is_some();
     let analysis = preflight::analyze(text, None);
     let mut warnings = Vec::new();
 
-    // Critical issues block the post (unless --force is used later)
-    for issue in &analysis.issues {
-        if issue.severity == preflight::Severity::Critical {
-            warnings.push(format!("[CRITICAL] {}: {}", issue.code, issue.message));
-        } else if issue.severity == preflight::Severity::Warning {
-            warnings.push(format!("[WARN] {}", issue.message));
+    if !is_reply {
+        // Only flag issues on standalone posts; replies have different rules
+        for issue in &analysis.issues {
+            if issue.severity == preflight::Severity::Critical {
+                warnings.push(format!("[CRITICAL] {}: {}", issue.code, issue.message));
+            } else if issue.severity == preflight::Severity::Warning {
+                warnings.push(format!("[WARN] {}", issue.message));
+            }
         }
-    }
 
-    // Show warnings in table mode (non-intrusively on stderr)
-    if format == OutputFormat::Table && !warnings.is_empty() {
-        eprintln!("--- Pre-flight ({}/100, {}) ---", analysis.score, analysis.grade);
-        for w in &warnings {
-            eprintln!("  {w}");
+        // Show warnings in table mode (non-intrusively on stderr)
+        if format == OutputFormat::Table && !warnings.is_empty() {
+            eprintln!("--- Pre-flight ({}/100, {}) ---", analysis.score, analysis.grade);
+            for w in &warnings {
+                eprintln!("  {w}");
+            }
+            if !analysis.suggestions.is_empty() {
+                eprintln!("  Tip: {}", analysis.suggestions[0]);
+            }
+            eprintln!("---");
         }
-        if !analysis.suggestions.is_empty() {
-            eprintln!("  Tip: {}", analysis.suggestions[0]);
-        }
-        eprintln!("---");
     }
 
     // ── Cannibalization check (is a recent post still gaining traction?) ──
@@ -179,16 +182,16 @@ pub async fn execute(
     let mut suggested_next = vec![
         format!("xmaster metrics {tweet_id}"),
     ];
-    if analysis.score < 60 {
+    if !is_reply && analysis.score < 60 {
         suggested_next.push("Consider: xmaster analyze \"text\" before posting next time".into());
     }
 
     let display = PostResult {
         id: result.id,
         text: result.text,
-        preflight_score: Some(analysis.score),
-        preflight_grade: Some(analysis.grade),
-        warnings: if format == OutputFormat::Json { warnings } else { vec![] },
+        preflight_score: if is_reply { None } else { Some(analysis.score) },
+        preflight_grade: if is_reply { None } else { Some(analysis.grade) },
+        warnings: if format == OutputFormat::Json && !is_reply { warnings } else { vec![] },
         suggested_next_commands: suggested_next,
     };
     output::render(format, &display, None);

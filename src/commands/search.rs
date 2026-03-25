@@ -18,16 +18,17 @@ struct TweetRow {
     text: String,
     likes: u64,
     retweets: u64,
+    replies: u64,
     date: String,
 }
 
 impl Tableable for SearchResults {
     fn to_table(&self) -> comfy_table::Table {
         let mut table = comfy_table::Table::new();
-        table.set_header(vec!["ID", "Author", "Text", "Likes", "RTs", "Date"]);
+        table.set_header(vec!["ID", "Author", "Text", "Likes", "RTs", "Replies", "Date"]);
         for t in &self.tweets {
-            let truncated = if t.text.len() > 80 {
-                format!("{}...", &t.text[..77])
+            let truncated: String = if t.text.chars().count() > 80 {
+                t.text.chars().take(77).collect::<String>() + "..."
             } else {
                 t.text.clone()
             };
@@ -37,6 +38,7 @@ impl Tableable for SearchResults {
                 truncated,
                 t.likes.to_string(),
                 t.retweets.to_string(),
+                t.replies.to_string(),
                 t.date.clone(),
             ]);
         }
@@ -46,7 +48,7 @@ impl Tableable for SearchResults {
 
 impl CsvRenderable for SearchResults {
     fn csv_headers() -> Vec<&'static str> {
-        vec!["id", "author", "text", "likes", "retweets", "date"]
+        vec!["id", "author", "text", "likes", "retweets", "replies", "date"]
     }
 
     fn csv_rows(&self) -> Vec<Vec<String>> {
@@ -59,6 +61,7 @@ impl CsvRenderable for SearchResults {
                     t.text.clone(),
                     t.likes.to_string(),
                     t.retweets.to_string(),
+                    t.replies.to_string(),
                     t.date.clone(),
                 ]
             })
@@ -90,6 +93,7 @@ pub async fn execute(
                 text: t.text,
                 likes: metrics.map(|m| m.like_count).unwrap_or(0),
                 retweets: metrics.map(|m| m.retweet_count).unwrap_or(0),
+                replies: metrics.map(|m| m.reply_count).unwrap_or(0),
                 date: t.created_at.unwrap_or_default(),
             }
         }).collect(),

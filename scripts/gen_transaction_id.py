@@ -195,13 +195,14 @@ def generate(method, path, ct0, auth_token):
 
     svg_content = parser.anim_svgs[sorted_ids[frame_idx]]
     d_attr = get_path_d(svg_content)
-    # Parse: M<x> <y> C ... C ...
-    parts = d_attr.split("C")
-    first = re.sub(r"[^\d]+", " ", parts[0]).strip().split() if parts else []
+    # Original library does: d[9:].split("C") — skip first 9 chars (e.g. "M0 0 C" prefix)
+    d_trimmed = d_attr[9:] if len(d_attr) > 9 else d_attr
+    parts = [p for p in d_trimmed.split("C") if p.strip()]
     arr = []
     for part in parts:
-        nums = [int(x) for x in re.sub(r"[^\d]+", " ", part).strip().split()]
-        arr.append(nums)
+        nums = [int(x) for x in re.sub(r"[^\d]+", " ", part).strip().split() if x]
+        if nums:
+            arr.append(nums)
 
     # Animation calculation
     total_time = 4096
