@@ -234,3 +234,14 @@
 1774402884:/Users/biobook/Projects/xmaster/src/commands/metrics.rs:src
 1774402909:/Users/biobook/Projects/xmaster/src/providers/xapi.rs:src
 1774402991:/Users/biobook/Projects/xmaster/Cargo.toml:root
+1774403353:/Users/biobook/Projects/xmaster/src/cli.rs:src
+1774403357:/Users/biobook/Projects/xmaster/src/commands/mod.rs:src
+1774403359:/Users/biobook/Projects/xmaster/src/commands/mod.rs:src
+1774403365:/Users/biobook/Projects/xmaster/src/commands/mod.rs:src
+1774403371:/Users/biobook/Projects/xmaster/src/commands/agent_info.rs:src
+1774403373:/Users/biobook/Projects/xmaster/src/commands/agent_info.rs:src
+1774403375:/Users/biobook/Projects/xmaster/src/commands/agent_info.rs:src
+1774403402:/Users/biobook/Projects/xmaster/src/intel/store.rs:src
+1774403413:/Users/biobook/Projects/xmaster/src/intel/store.rs:src
+1774403452:/Users/biobook/Projects/xmaster/src/commands/engage_recommend.rs:src
+1774403611:/Users/biobook/Projects/xmaster/Cargo.toml:root

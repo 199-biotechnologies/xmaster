@@ -53,6 +53,15 @@ pub struct ReciprocityInfo {
     pub reply_rate: f64,
 }
 
+#[derive(Debug, Clone, Serialize)]
+pub struct ReciprocatorInfo {
+    pub username: String,
+    pub total_engagements: i64,
+    pub replies_received: i64,
+    pub reply_rate: f64,
+    pub avg_followers: i64,
+}
+
 // ---------------------------------------------------------------------------
 // IntelStore
 // ---------------------------------------------------------------------------
@@ -521,6 +530,46 @@ impl IntelStore {
                 },
             )
             .map(|opt| opt)
+    }
+
+    /// Top reciprocators: accounts that reply back most often, filtered by min followers.
+    pub fn get_top_reciprocators(
+        &self,
+        min_followers: i64,
+        limit: i64,
+    ) -> Result<Vec<ReciprocatorInfo>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT target_username,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN got_reply_back = 1 THEN 1 ELSE 0 END) AS replies_back,
+                    AVG(target_followers) AS avg_fol
+             FROM engagement_actions
+             WHERE target_username IS NOT NULL
+               AND target_followers >= ?1
+             GROUP BY target_username
+             HAVING replies_back > 0
+             ORDER BY (CAST(replies_back AS REAL) / total) DESC
+             LIMIT ?2",
+        )?;
+
+        let rows = stmt.query_map(params![min_followers, limit], |row| {
+            let total: i64 = row.get(1)?;
+            let replies_received: i64 = row.get(2)?;
+            let avg_fol: f64 = row.get(3)?;
+            Ok(ReciprocatorInfo {
+                username: row.get(0)?,
+                total_engagements: total,
+                replies_received,
+                reply_rate: if total > 0 {
+                    replies_received as f64 / total as f64
+                } else {
+                    0.0
+                },
+                avg_followers: avg_fol as i64,
+            })
+        })?;
+
+        rows.collect()
     }
 }
 

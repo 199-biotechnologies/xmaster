@@ -20,8 +20,9 @@ pub mod report;
 pub mod suggest;
 pub mod schedule;
 pub mod bookmarks_cmd;
+pub mod engage_recommend;
 
-use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, ListCommands, TrackCommands, ReportCommands, SuggestCommands, ScheduleCommands, BookmarkCommands};
+use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, EngageCommands, ListCommands, TrackCommands, ReportCommands, SuggestCommands, ScheduleCommands, BookmarkCommands};
 use crate::context::AppContext;
 use crate::errors::XmasterError;
 use crate::output::OutputFormat;
@@ -80,6 +81,11 @@ pub async fn dispatch(
             agent_info::execute(format);
             Ok(())
         }
+        Commands::Engage { action } => match action {
+            EngageCommands::Recommend { topic, min_followers, count } => {
+                engage_recommend::recommend(ctx, format, topic.as_deref(), *min_followers, *count).await
+            }
+        },
         Commands::Update { check } => update::execute(*check).await,
         Commands::Thread { texts, media } => thread::execute(ctx, format, texts, media).await,
         Commands::Reply { id, text, media } => {

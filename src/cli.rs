@@ -302,11 +302,33 @@ pub enum Commands {
         action: ScheduleCommands,
     },
 
+    /// Engagement intelligence
+    Engage {
+        #[command(subcommand)]
+        action: EngageCommands,
+    },
+
     /// Self-update from GitHub releases
     Update {
         /// Check for updates without installing
         #[arg(long)]
         check: bool,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum EngageCommands {
+    /// Find high-ROI reply targets in your niche
+    Recommend {
+        /// Topic to discover targets (uses AI search)
+        #[arg(long)]
+        topic: Option<String>,
+        /// Minimum follower count for targets
+        #[arg(long, default_value = "1000")]
+        min_followers: u32,
+        /// Number of recommendations
+        #[arg(long, short, default_value = "5")]
+        count: usize,
     },
 }
 

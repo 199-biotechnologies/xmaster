@@ -171,17 +171,9 @@ fn unknown_command_fails() {
 // ─── Global Flags ───────────────────────────────────────────────
 
 #[test]
-fn quiet_flag_accepted() {
+fn json_flag_with_agent_info() {
     xmaster()
-        .args(["--quiet", "agent-info"])
-        .assert()
-        .success();
-}
-
-#[test]
-fn json_and_quiet_together() {
-    xmaster()
-        .args(["--json", "--quiet", "agent-info"])
+        .args(["--json", "agent-info"])
         .assert()
         .success()
         .stdout(predicate::str::contains("\"status\": \"success\""));

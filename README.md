@@ -125,6 +125,14 @@ xmaster post "Hello from xmaster"
 
 The `sync` command archives bookmark content locally in SQLite. Even if the original tweet gets deleted, your local copy survives. Local search is instant, and the digest helps you actually read what you save. Sync regularly to keep your archive fresh.
 
+### Engagement Intelligence
+
+| Command | Description | Example |
+|---------|-------------|---------|
+| `engage recommend` | Find high-ROI reply targets in your niche | `xmaster engage recommend --topic "longevity biotech" -c 10` |
+
+The algorithm weights conversations (reply + author replies back) at 150x a like. `engage recommend` finds accounts most likely to reply back, ranked by reciprocity, reach, and freshness. Combine with `--topic` to discover new accounts in your niche via AI search.
+
 ### Search
 
 | Command | Description | Example |

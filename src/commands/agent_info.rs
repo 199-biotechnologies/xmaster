@@ -77,6 +77,7 @@ pub fn execute(format: OutputFormat) {
             "suggest best-time".into(), "suggest next-post".into(),
             "schedule add".into(), "schedule list".into(), "schedule cancel".into(),
             "schedule reschedule".into(), "schedule fire".into(), "schedule setup".into(),
+            "engage recommend".into(),
             "config show".into(), "config set".into(), "config check".into(),
             "agent-info".into(), "update".into(),
         ],
@@ -88,6 +89,7 @@ pub fn execute(format: OutputFormat) {
             "performance_tracking".into(), "timing_intelligence".into(),
             "scheduling".into(),
             "bookmark_intelligence".into(),
+            "engagement_intelligence".into(),
             "self_update".into(),
         ],
         env_prefix: "XMASTER_".into(),
@@ -124,6 +126,7 @@ pub fn execute(format: OutputFormat) {
             "Check 'xmaster report weekly' to learn what's working".into(),
             "Use 'xmaster schedule add --at auto' to schedule posts at your historically best time".into(),
             "Run 'xmaster bookmarks sync' regularly to archive bookmarks — local copies survive tweet deletion".into(),
+            "Use 'xmaster engage recommend --topic \"your niche\"' to find high-ROI reply targets — conversations are 150x a like".into(),
         ],
     };
     output::render(format, &info, None);
