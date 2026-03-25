@@ -45,6 +45,12 @@ pub enum Commands {
         id: String,
     },
 
+    /// Read a post — full text, author, date, metrics, media URLs in one call
+    Read {
+        /// Tweet ID or URL
+        id: String,
+    },
+
     /// Like a tweet
     Like {
         /// Tweet ID or URL

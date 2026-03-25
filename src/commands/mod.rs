@@ -23,6 +23,7 @@ pub mod bookmarks_cmd;
 pub mod engage_recommend;
 pub mod skill_cmd;
 pub mod replies;
+pub mod read_post;
 
 use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, EngageCommands, ListCommands, TrackCommands, ReportCommands, SuggestCommands, ScheduleCommands, BookmarkCommands, SkillCommands};
 use crate::context::AppContext;
@@ -113,6 +114,7 @@ pub async fn dispatch(
         },
         Commands::HideReply { id } => moderation::hide_reply(ctx, format, id).await,
         Commands::UnhideReply { id } => moderation::unhide_reply(ctx, format, id).await,
+        Commands::Read { id } => read_post::execute(ctx, format, id).await,
         Commands::Replies { id, count } => replies::execute(ctx, format, id, *count).await,
         Commands::RateLimits => rate_limits::execute(ctx, format).await,
         Commands::Block { username } => moderation::block(ctx, format, username).await,
