@@ -96,20 +96,33 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
         score -= 30;
     }
 
-    if features.char_count > 280 {
+    // X Premium allows up to 25,000 characters. Standard accounts: 280.
+    // We warn at 280 (standard visibility) but only mark critical at 25,000.
+    if features.char_count > 25_000 {
         issues.push(Issue {
             severity: Severity::Critical,
             code: "over_limit".into(),
             message: format!(
-                "Tweet is {} characters (limit 280)",
+                "Post is {} characters (X Premium limit: 25,000)",
                 features.char_count
             ),
             fix: Some(format!(
                 "Remove {} characters",
-                features.char_count - 280
+                features.char_count - 25_000
             )),
         });
         score -= 30;
+    } else if features.char_count > 280 {
+        issues.push(Issue {
+            severity: Severity::Info,
+            code: "long_post".into(),
+            message: format!(
+                "Post is {} characters (over 280; requires X Premium)",
+                features.char_count
+            ),
+            fix: None,
+        });
+        // No score penalty — long posts are fine for Premium users
     }
 
     if features.has_link && features.link_position.as_deref() == Some("body") {
@@ -464,8 +477,15 @@ mod tests {
     }
 
     #[test]
-    fn over_limit_detected() {
+    fn over_280_is_info_long_post() {
         let long = "a".repeat(300);
+        let result = analyze(&long, None);
+        assert!(result.issues.iter().any(|i| i.code == "long_post"));
+    }
+
+    #[test]
+    fn over_25000_is_critical() {
+        let long = "a".repeat(25_001);
         let result = analyze(&long, None);
         assert!(result.issues.iter().any(|i| i.code == "over_limit"));
     }
@@ -522,12 +542,11 @@ mod tests {
     }
 
     #[test]
-    fn over_280_is_critical() {
+    fn at_281_is_long_post_info() {
         let long = "x".repeat(281);
         let result = analyze(&long, None);
-        let issue = result.issues.iter().find(|i| i.code == "over_limit").unwrap();
-        assert_eq!(issue.severity, Severity::Critical);
-        assert!(result.score < 50, "score was {}", result.score);
+        let issue = result.issues.iter().find(|i| i.code == "long_post").unwrap();
+        assert_eq!(issue.severity, Severity::Info);
     }
 
     #[test]

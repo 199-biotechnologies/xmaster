@@ -749,6 +749,39 @@ impl XApi {
         })
     }
 
+    /// Look up any tweet by ID (yours or someone else's). Only requests public metrics.
+    pub async fn get_tweet(&self, id: &str) -> Result<TweetData, XmasterError> {
+        let url = format!(
+            "{BASE}/tweets/{id}?{tf}&{exp}&{uf}",
+            tf = Self::tweet_fields(),
+            exp = Self::tweet_expansions(),
+            uf = Self::user_fields_param(),
+        );
+        let val = self.request(Method::GET, &url, None).await?;
+        let includes = val.get("includes").cloned();
+        let mut tweet: TweetData = serde_json::from_value(
+            val.get("data")
+                .cloned()
+                .ok_or_else(|| XmasterError::NotFound(format!("Tweet {id}")))?
+        )?;
+        Self::merge_authors(&mut [tweet.clone()], &includes);
+        if let Some(inc) = &includes {
+            Self::merge_authors(std::slice::from_mut(&mut tweet), &Some(inc.clone()));
+        }
+        Ok(tweet)
+    }
+
+    /// Get replies to a tweet using conversation_id search (last 7 days).
+    pub async fn get_replies(
+        &self,
+        tweet_id: &str,
+        count: usize,
+    ) -> Result<Vec<TweetData>, XmasterError> {
+        let max = count.clamp(10, 100);
+        let query = format!("conversation_id:{tweet_id}");
+        self.search_tweets(&query, "recency", max).await
+    }
+
     pub async fn delete_tweet(&self, id: &str) -> Result<(), XmasterError> {
         self.request(Method::DELETE, &format!("{BASE}/tweets/{id}"), None)
             .await?;
@@ -1119,7 +1152,7 @@ impl XApi {
         let is_video = mime.starts_with("video/");
         let category = if is_video { "tweet_video" } else { "tweet_image" };
 
-        // Validate file size against Twitter limits
+        // Validate file size against X upload limits
         let max_size = if is_video {
             512 * 1024 * 1024
         } else if mime == "image/gif" {

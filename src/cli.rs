@@ -242,6 +242,15 @@ pub enum Commands {
         id: String,
     },
 
+    /// Get replies to a tweet (uses conversation_id search)
+    Replies {
+        /// Tweet ID or URL
+        id: String,
+        /// Max replies to fetch
+        #[arg(long, short, default_value = "20")]
+        count: usize,
+    },
+
     /// Show API rate limit status
     RateLimits,
 

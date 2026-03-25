@@ -168,6 +168,67 @@ fn oauth_secrets(ctx: &AppContext) -> reqwest_oauth1::Secrets<'_> {
         .token(&k.access_token, &k.access_token_secret)
 }
 
+/// Fetch tweet metrics with automatic fallback: tries private+public metrics first
+/// (works for your own tweets), falls back to public-only on 403 (others' tweets).
+/// Only retries on 403 — auth errors, rate limits, and server errors propagate immediately.
+async fn fetch_tweet_metrics(
+    ctx: &AppContext,
+    tweet_id: &str,
+) -> Result<(TweetMetricsData, bool), XmasterError> {
+    // Try full metrics first (own tweets)
+    let url_full = format!(
+        "https://api.x.com/2/tweets/{tweet_id}?tweet.fields=public_metrics,non_public_metrics,organic_metrics"
+    );
+    let resp = ctx.client.clone().oauth1(oauth_secrets(ctx))
+        .get(&url_full).send().await?;
+
+    let first_status = resp.status();
+    let first_body = resp.text().await.unwrap_or_default();
+
+    if first_status.is_success() {
+        if let Ok(envelope) = serde_json::from_str::<ApiEnvelope>(&first_body) {
+            if let Some(tweet) = envelope.data {
+                return Ok((tweet, false));
+            }
+        }
+    }
+
+    // Only fall back to public-only on 403 (private metrics on someone else's tweet).
+    // For 401, 429, 5xx — propagate the real error.
+    if first_status == 401 {
+        return Err(XmasterError::AuthMissing {
+            provider: "x",
+            message: format!("HTTP 401: {}", &first_body[..first_body.len().min(200)]),
+        });
+    }
+    if first_status == 429 {
+        return Err(XmasterError::RateLimited { provider: "x", reset_at: 0 });
+    }
+    if first_status.as_u16() >= 500 {
+        return Err(XmasterError::ServerError { status: first_status.as_u16() });
+    }
+
+    // 403 or other client error — try public-only fields
+    let url_public = format!(
+        "https://api.x.com/2/tweets/{tweet_id}?tweet.fields=public_metrics,created_at,author_id,text"
+    );
+    let resp = ctx.client.clone().oauth1(oauth_secrets(ctx))
+        .get(&url_public).send().await?;
+
+    let status = resp.status();
+    if !status.is_success() {
+        let text = resp.text().await.unwrap_or_default();
+        return Err(XmasterError::NotFound(format!(
+            "Tweet {tweet_id} (HTTP {status}: {})",
+            &text[..text.len().min(100)]
+        )));
+    }
+
+    let envelope: ApiEnvelope = resp.json().await?;
+    let tweet = envelope.data.ok_or_else(|| XmasterError::NotFound(format!("Tweet {tweet_id}")))?;
+    Ok((tweet, true))
+}
+
 pub async fn execute_batch(
     ctx: Arc<AppContext>,
     format: OutputFormat,
@@ -190,39 +251,25 @@ pub async fn execute_batch(
     let mut rows = Vec::new();
     for id in ids {
         let tweet_id = parse_tweet_id(id);
-        let url = format!(
-            "https://api.x.com/2/tweets/{tweet_id}?tweet.fields=public_metrics,non_public_metrics,organic_metrics"
-        );
-        let resp = ctx
-            .client
-            .clone()
-            .oauth1(oauth_secrets(&ctx))
-            .get(&url)
-            .send()
-            .await?;
-
-        let status = resp.status();
-        if !status.is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            eprintln!("Warning: Failed to fetch {tweet_id}: HTTP {status}: {text}");
-            continue;
-        }
-
-        let envelope: ApiEnvelope = resp.json().await?;
-        if let Some(tweet) = envelope.data {
-            let public = tweet.public_metrics.unwrap_or_default();
-            let non_public = tweet.non_public_metrics.unwrap_or_default();
-            rows.push(MetricsRow {
-                tweet_id: tweet.id,
-                impressions: public.impression_count,
-                likes: public.like_count,
-                retweets: public.retweet_count,
-                replies: public.reply_count,
-                quotes: public.quote_count,
-                bookmarks: public.bookmark_count,
-                profile_clicks: non_public.user_profile_clicks,
-                url_clicks: non_public.url_link_clicks,
-            });
+        match fetch_tweet_metrics(&ctx, &tweet_id).await {
+            Ok((tweet, _)) => {
+                let public = tweet.public_metrics.unwrap_or_default();
+                let non_public = tweet.non_public_metrics.unwrap_or_default();
+                rows.push(MetricsRow {
+                    tweet_id: tweet.id,
+                    impressions: public.impression_count,
+                    likes: public.like_count,
+                    retweets: public.retweet_count,
+                    replies: public.reply_count,
+                    quotes: public.quote_count,
+                    bookmarks: public.bookmark_count,
+                    profile_clicks: non_public.user_profile_clicks,
+                    url_clicks: non_public.url_link_clicks,
+                });
+            }
+            Err(e) => {
+                eprintln!("Warning: {tweet_id}: {e}");
+            }
         }
     }
 
@@ -244,33 +291,16 @@ pub async fn execute(
     }
 
     let tweet_id = parse_tweet_id(id);
-    let url = format!(
-        "https://api.x.com/2/tweets/{tweet_id}?tweet.fields=public_metrics,non_public_metrics,organic_metrics"
-    );
 
-    let resp = ctx
-        .client
-        .clone()
-        .oauth1(oauth_secrets(&ctx))
-        .get(&url)
-        .send()
-        .await?;
-
-    let status = resp.status();
-    if !status.is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(XmasterError::Api {
-            provider: "x",
-            code: "api_error",
-            message: format!("HTTP {status}: {text}"),
-        });
-    }
-
-    let envelope: ApiEnvelope = resp.json().await?;
-    let tweet = envelope.data.ok_or_else(|| XmasterError::NotFound(format!("Tweet {tweet_id}")))?;
+    // Try with private metrics first (own tweets), fall back to public-only (others' tweets)
+    let (tweet, is_public_only) = fetch_tweet_metrics(&ctx, &tweet_id).await?;
 
     let public = tweet.public_metrics.unwrap_or_default();
     let non_public = tweet.non_public_metrics.unwrap_or_default();
+
+    if is_public_only && format == OutputFormat::Table {
+        eprintln!("Note: Showing public metrics only (not your tweet)");
+    }
 
     let display = MetricsDisplay {
         tweet_id: tweet.id,

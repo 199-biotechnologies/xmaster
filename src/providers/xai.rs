@@ -156,7 +156,7 @@ impl XaiSearch {
             .unwrap_or_default();
 
         let prompt = format!(
-            "Search X (Twitter) for posts about: {query}\n\
+            "Search X for posts about: {query}\n\
              Return up to {count} recent and relevant posts.{lang_part}\n\
              For each post include: author @username, display name, post text, \
              date/time, and engagement metrics (likes, reposts, replies) if available.\n\
@@ -186,7 +186,7 @@ impl XaiSearch {
             .unwrap_or_default();
 
         let prompt = format!(
-            "Find recent posts from X (Twitter) user @{username}.\n\
+            "Find recent posts from X user @{username}.\n\
              Return up to {count} of their most recent posts.{topic_part}\n\
              For each post include: post text, date/time, and engagement metrics \
              (likes, reposts, replies) if available.\n\
@@ -221,7 +221,7 @@ impl XaiSearch {
             .unwrap_or_default();
 
         let prompt = format!(
-            "What are the current trending topics and hashtags on X (Twitter)\
+            "What are the current trending topics and hashtags on X\
              {region_part}?{category_part}\n\
              List the top trending topics with brief descriptions of why they are trending.\n\
              Format the output as markdown."
