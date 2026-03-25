@@ -249,9 +249,3 @@ fn extract_usernames_from_text(text: &str) -> Vec<String> {
     usernames
 }
 
-/// Try to extract follower count from author_id context. Returns 0 if unavailable.
-fn get_mention_followers(_author_id: &Option<String>) -> u64 {
-    // Follower counts aren't included in mentions data by default.
-    // We rely on the store's target_followers or the scoring formula handles 0.
-    0
-}

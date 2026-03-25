@@ -139,8 +139,6 @@ pub struct DmMessage {
 struct ApiResponse<T> {
     data: Option<T>,
     #[serde(default)]
-    includes: Option<Value>,
-    #[serde(default)]
     errors: Option<Vec<ApiErrorDetail>>,
 }
 
@@ -175,27 +173,6 @@ impl XApi {
             cached_user_id: OnceCell::new(),
             last_rate_limit: Mutex::new(None),
         }
-    }
-
-    // -- Rate limit accessors -----------------------------------------------
-
-    /// Returns the most recently observed rate limit info, if any.
-    pub async fn last_rate_limit(&self) -> Option<RateLimitInfo> {
-        *self.last_rate_limit.lock().await
-    }
-
-    /// Makes a lightweight call to /2/users/me just to capture rate limit headers.
-    pub async fn get_rate_limits(&self) -> Result<RateLimitInfo, XmasterError> {
-        self.request(Method::GET, &format!("{BASE}/users/me?user.fields=id"), None)
-            .await?;
-        self.last_rate_limit
-            .lock()
-            .await
-            .ok_or_else(|| XmasterError::Api {
-                provider: "x",
-                code: "no_rate_limit_headers",
-                message: "No rate limit headers in response".into(),
-            })
     }
 
     // -- OAuth helpers ------------------------------------------------------
@@ -651,9 +628,16 @@ impl XApi {
         let ct0 = &keys.web_ct0;
         let auth_token = &keys.web_auth_token;
 
-        // Generate x-client-transaction-id via helper script
+        // Generate x-client-transaction-id natively (no Python dependency)
         let gql_path = format!("/i/api/graphql/{query_id}/CreateTweet");
-        let transaction_id = self.generate_transaction_id("POST", &gql_path, ct0, auth_token)?;
+        let transaction_id = crate::transaction_id::generate(
+            &self.ctx.client, "POST", &gql_path, ct0, auth_token,
+        )
+        .await
+        .map_err(|e| {
+            warn!("Native transaction ID failed: {e}");
+            e
+        })?;
 
         // Build the GraphQL variables
         let mut variables = json!({
@@ -798,79 +782,6 @@ impl XApi {
         })
     }
 
-    /// Generate X-Client-Transaction-Id by calling the helper Python script.
-    /// This is needed to pass X's anti-automation checks on GraphQL endpoints.
-    fn generate_transaction_id(
-        &self,
-        method: &str,
-        path: &str,
-        ct0: &str,
-        auth_token: &str,
-    ) -> Result<String, XmasterError> {
-        // Find the script relative to the xmaster binary, or in common locations
-        let script = Self::find_transaction_script()?;
-
-        let output = std::process::Command::new("python3")
-            .arg(&script)
-            .arg(method)
-            .arg(path)
-            .arg(ct0)
-            .arg(auth_token)
-            .output()
-            .map_err(|e| XmasterError::Config(format!(
-                "Failed to run transaction ID script (python3 required): {e}"
-            )))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(XmasterError::Api {
-                provider: "x-web",
-                code: "transaction_id_failed",
-                message: format!("Transaction ID generation failed: {stderr}"),
-            });
-        }
-
-        let tid = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if tid.is_empty() {
-            return Err(XmasterError::Api {
-                provider: "x-web",
-                code: "transaction_id_empty",
-                message: "Transaction ID script returned empty output".into(),
-            });
-        }
-
-        Ok(tid)
-    }
-
-    fn find_transaction_script() -> Result<std::path::PathBuf, XmasterError> {
-        // Check next to the binary first
-        if let Ok(exe) = std::env::current_exe() {
-            let dir = exe.parent().unwrap_or(std::path::Path::new("."));
-            let script = dir.join("scripts").join("gen_transaction_id.py");
-            if script.exists() {
-                return Ok(script);
-            }
-            // Check ../scripts/ (for cargo builds)
-            let script = dir.parent().unwrap_or(dir).join("scripts").join("gen_transaction_id.py");
-            if script.exists() {
-                return Ok(script);
-            }
-        }
-        // Check ~/.config/xmaster/
-        let config_script = crate::config::config_dir().join("gen_transaction_id.py");
-        if config_script.exists() {
-            return Ok(config_script);
-        }
-        // Check the repo root (dev mode)
-        let repo_script = std::path::PathBuf::from("scripts/gen_transaction_id.py");
-        if repo_script.exists() {
-            return Ok(repo_script);
-        }
-        Err(XmasterError::Config(
-            "gen_transaction_id.py not found. Copy it to ~/.config/xmaster/gen_transaction_id.py".into()
-        ))
-    }
-
     /// Look up any tweet by ID (yours or someone else's). Only requests public metrics.
     pub async fn get_tweet(&self, id: &str) -> Result<TweetData, XmasterError> {
         let url = format!(
@@ -899,7 +810,7 @@ impl XApi {
         tweet_id: &str,
         count: usize,
     ) -> Result<Vec<TweetData>, XmasterError> {
-        let max = count.clamp(1, 100);
+        let max = count.clamp(10, 100);
         let query = format!("conversation_id:{tweet_id}");
         self.search_tweets(&query, "recency", max).await
     }
@@ -1024,7 +935,7 @@ impl XApi {
         user_id: &str,
         count: usize,
     ) -> Result<Vec<TweetData>, XmasterError> {
-        let max = count.clamp(1, 100);
+        let max = count.clamp(5, 100);
         let url = format!(
             "{BASE}/users/{user_id}/tweets?max_results={max}&{tf}&{exp}&{uf}",
             tf = Self::tweet_fields(),
@@ -1051,7 +962,7 @@ impl XApi {
         count: usize,
         since_id: Option<&str>,
     ) -> Result<Vec<TweetData>, XmasterError> {
-        let max = count.clamp(1, 100);
+        let max = count.clamp(5, 100);
         let since_param = since_id
             .map(|id| format!("&since_id={id}"))
             .unwrap_or_default();
@@ -1123,7 +1034,7 @@ impl XApi {
         mode: &str,
         count: usize,
     ) -> Result<Vec<TweetData>, XmasterError> {
-        let max = count.clamp(1, 100);
+        let max = count.clamp(10, 100);
         let encoded_query = percent_encoding::utf8_percent_encode(
             query,
             percent_encoding::NON_ALPHANUMERIC,
@@ -1134,23 +1045,6 @@ impl XApi {
         };
         let url = format!(
             "{BASE}/tweets/search/recent?query={encoded_query}&max_results={max}&sort_order={sort}&{tf}&{exp}&{uf}",
-            tf = Self::tweet_fields(),
-            exp = Self::tweet_expansions(),
-            uf = Self::user_fields_param(),
-        );
-        let (mut tweets, includes) =
-            self.request_list::<TweetData>(Method::GET, &url, None).await?;
-        Self::merge_authors(&mut tweets, &includes);
-        Ok(tweets)
-    }
-
-    // -- Bookmarks ----------------------------------------------------------
-
-    pub async fn get_bookmarks(&self, count: usize) -> Result<Vec<TweetData>, XmasterError> {
-        let uid = self.get_authenticated_user_id().await?;
-        let max = count.clamp(1, 100);
-        let url = format!(
-            "{BASE}/users/{uid}/bookmarks?max_results={max}&{tf}&{exp}&{uf}",
             tf = Self::tweet_fields(),
             exp = Self::tweet_expansions(),
             uf = Self::user_fields_param(),
@@ -1478,37 +1372,4 @@ impl XApi {
         }
     }
 
-    /// Set alt text on an uploaded media item for accessibility.
-    pub async fn set_media_alt_text(
-        &self,
-        media_id: &str,
-        alt_text: &str,
-    ) -> Result<(), XmasterError> {
-        self.require_auth()?;
-
-        let body = json!({
-            "media_id": media_id,
-            "alt_text": { "text": alt_text }
-        });
-
-        let resp = self
-            .ctx
-            .client
-            .clone()
-            .oauth1(self.secrets())
-            .post("https://upload.twitter.com/1.1/media/metadata/create.json")
-            .header("Content-Type", "application/json")
-            .body(serde_json::to_string(&body)?)
-            .send()
-            .await?;
-
-        if !resp.status().is_success() {
-            let text = resp.text().await.unwrap_or_default();
-            return Err(XmasterError::Media(format!(
-                "Failed to set alt text: {text}"
-            )));
-        }
-
-        Ok(())
-    }
 }

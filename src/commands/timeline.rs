@@ -114,15 +114,3 @@ pub async fn mentions(
     Ok(())
 }
 
-pub async fn bookmarks(
-    ctx: Arc<AppContext>,
-    format: OutputFormat,
-    count: usize,
-) -> Result<(), XmasterError> {
-    let api = XApi::new(ctx.clone());
-    // TODO: Pagination — same pattern as timeline(): loop with next_token
-    // from get_bookmarks() when --all is passed.
-    let tweets = api.get_bookmarks(count).await?;
-    output::render_csv(format, &tweets_to_list(tweets), None);
-    Ok(())
-}

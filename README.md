@@ -36,7 +36,7 @@ Most X tools make you pick between the official API and scraping. xmaster gives 
 - **Pre-flight intelligence** — Scores your post before it goes out. Catches weak hooks, link penalties, engagement bait. Saves you from posting something that'll get buried.
 - **Reply bypass** — X blocks programmatic replies to strangers. xmaster handles it automatically via web session fallback. You just run `reply` and it works.
 - **Writing style** — Save how you write. Your agent drafts in your voice, not generic AI slop.
-- **Single binary** — ~8MB Rust, fast startup. Reply fallback uses a small Python helper (stdlib only, no pip deps).
+- **Single binary** — ~8MB Rust binary, fast startup. No Python, no Node, no Docker.
 
 ## Install
 

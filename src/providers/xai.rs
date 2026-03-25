@@ -172,41 +172,6 @@ impl XaiSearch {
         })
     }
 
-    /// Retrieve recent posts from a specific X user.
-    pub async fn get_user_posts(
-        &self,
-        username: &str,
-        count: usize,
-        topic_filter: Option<&str>,
-        from_date: Option<&str>,
-        to_date: Option<&str>,
-    ) -> Result<XaiSearchResult, XmasterError> {
-        let topic_part = topic_filter
-            .map(|t| format!(" Focus on posts related to: {t}."))
-            .unwrap_or_default();
-
-        let prompt = format!(
-            "Find recent posts from X user @{username}.\n\
-             Return up to {count} of their most recent posts.{topic_part}\n\
-             For each post include: post text, date/time, and engagement metrics \
-             (likes, reposts, replies) if available.\n\
-             Format the output as markdown."
-        );
-
-        let x_config = build_x_search_config(
-            from_date,
-            to_date,
-            Some(&[username.to_string()]),
-            None,
-        );
-        let resp = self.call_responses_api(&prompt, x_config).await?;
-
-        Ok(XaiSearchResult {
-            text: extract_text(&resp),
-            citations: extract_citations(&resp),
-        })
-    }
-
     /// Get current trending topics and hashtags on X.
     pub async fn get_trending(
         &self,
