@@ -37,3 +37,4 @@ tarpaulin-report.html
 .team-runs/
 .claude/
 .team-runs/
+docs/x-algorithm-analysis/*.tar.gz
