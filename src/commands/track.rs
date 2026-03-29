@@ -27,7 +27,7 @@ pub async fn track_run(
 }
 
 /// Check if targets replied back to our replies.
-async fn check_reply_backs(ctx: &AppContext) -> u32 {
+async fn check_reply_backs(ctx: &Arc<AppContext>) -> u32 {
     let store = match crate::intel::store::IntelStore::open() {
         Ok(s) => s,
         Err(_) => return 0,
@@ -42,7 +42,7 @@ async fn check_reply_backs(ctx: &AppContext) -> u32 {
         return 0;
     }
 
-    let api = XApi::new(std::sync::Arc::new(ctx.clone()));
+    let api = XApi::new(ctx.clone());
     let mut checked = 0u32;
 
     for pr in &pending {

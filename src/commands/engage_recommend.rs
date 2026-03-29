@@ -225,6 +225,95 @@ pub async fn recommend(
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
+// Watchlist CRUD
+// ---------------------------------------------------------------------------
+
+pub async fn watchlist_add(
+    ctx: Arc<AppContext>,
+    format: OutputFormat,
+    username: &str,
+    topic: Option<&str>,
+) -> Result<(), XmasterError> {
+    let store = IntelStore::open().map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+    let api = crate::providers::xapi::XApi::new(ctx.clone());
+
+    // Fetch user info to get ID and follower count
+    let user = api.get_user_by_username(username).await?;
+    let followers = user.public_metrics.as_ref().map(|m| m.followers_count as i64).unwrap_or(0);
+
+    store.add_watchlist(username, Some(&user.id), topic, followers)
+        .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+    #[derive(Serialize)]
+    struct WatchlistAddResult { username: String, user_id: String, followers: i64, topic: Option<String>, status: String }
+    impl Tableable for WatchlistAddResult {
+        fn to_table(&self) -> comfy_table::Table {
+            let mut t = comfy_table::Table::new();
+            t.set_header(vec!["Field", "Value"]);
+            t.add_row(vec!["Username", &format!("@{}", self.username)]);
+            t.add_row(vec!["Followers", &format_followers(self.followers as u64)]);
+            t.add_row(vec!["Status", &self.status]);
+            t
+        }
+    }
+    let display = WatchlistAddResult {
+        username: username.to_string(), user_id: user.id, followers, topic: topic.map(String::from), status: "added".into(),
+    };
+    output::render(format, &display, None);
+    Ok(())
+}
+
+pub async fn watchlist_list(format: OutputFormat) -> Result<(), XmasterError> {
+    let store = IntelStore::open().map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+    let entries = store.list_watchlist().map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+    if entries.is_empty() {
+        return Err(XmasterError::NotFound("Watchlist is empty. Add accounts with: xmaster engage watchlist add <username>".into()));
+    }
+
+    #[derive(Serialize)]
+    struct WatchlistDisplay { accounts: Vec<crate::intel::store::WatchlistEntry> }
+    impl Tableable for WatchlistDisplay {
+        fn to_table(&self) -> comfy_table::Table {
+            let mut t = comfy_table::Table::new();
+            t.set_header(vec!["Username", "Followers", "Topic"]);
+            for a in &self.accounts {
+                t.add_row(vec![
+                    format!("@{}", a.username),
+                    format_followers(a.followers as u64),
+                    a.topic.clone().unwrap_or_default(),
+                ]);
+            }
+            t
+        }
+    }
+
+    output::render(format, &WatchlistDisplay { accounts: entries }, None);
+    Ok(())
+}
+
+pub async fn watchlist_remove(format: OutputFormat, username: &str) -> Result<(), XmasterError> {
+    let store = IntelStore::open().map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+    let removed = store.remove_watchlist(username).map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+    if !removed {
+        return Err(XmasterError::NotFound(format!("@{username} not in watchlist")));
+    }
+
+    #[derive(Serialize)]
+    struct RemoveResult { username: String, status: String }
+    impl Tableable for RemoveResult {
+        fn to_table(&self) -> comfy_table::Table {
+            let mut t = comfy_table::Table::new();
+            t.add_row(vec![&format!("@{} removed from watchlist", self.username)]);
+            t
+        }
+    }
+    output::render(format, &RemoveResult { username: username.to_string(), status: "removed".into() }, None);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
 // engage feed — find fresh posts from big accounts to reply to NOW
 // ---------------------------------------------------------------------------
 
@@ -278,21 +367,60 @@ pub async fn feed(
 ) -> Result<(), XmasterError> {
     let api = crate::providers::xapi::XApi::new(ctx.clone());
 
-    // Calculate start_time from max_age_mins
+    // Phase 1: Check watchlist accounts first (saves API search calls)
+    let mut watchlist_tweets = Vec::new();
+    if let Ok(store) = IntelStore::open() {
+        if let Ok(watchlist) = store.list_watchlist() {
+            for entry in &watchlist {
+                if let Some(ref uid) = entry.user_id {
+                    let start_time = {
+                        let since = chrono::Utc::now() - chrono::Duration::minutes(max_age_mins as i64);
+                        since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+                    };
+                    if let Ok(tweets) = api.get_user_tweets_paginated(uid, 5, Some(&start_time), None).await {
+                        for mut t in tweets {
+                            // Inject known follower count from watchlist (avoids missing data)
+                            if t.author_followers.is_none() {
+                                t.author_followers = Some(entry.followers as u64);
+                            }
+                            if t.author_username.is_none() {
+                                t.author_username = Some(entry.username.clone());
+                            }
+                            watchlist_tweets.push(t);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // Phase 2: Cold search for discovery (only if watchlist didn't fill count)
     let start_time = {
         let now = chrono::Utc::now();
         let since = now - chrono::Duration::minutes(max_age_mins as i64);
         since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
     };
 
-    // Search for recent posts on this topic
-    let tweets = api.search_tweets_paginated(
-        topic,
-        "recent",
-        100.min(count * 5), // fetch more than needed to filter
-        Some(&start_time),
-        None,
-    ).await?;
+    let search_tweets = if watchlist_tweets.len() < count {
+        api.search_tweets_paginated(
+            topic,
+            "recent",
+            100.min(count * 5),
+            Some(&start_time),
+            None,
+        ).await.unwrap_or_default()
+    } else {
+        Vec::new()
+    };
+
+    // Combine: watchlist first, then search results
+    let mut seen_ids = std::collections::HashSet::new();
+    let mut tweets = Vec::new();
+    for t in watchlist_tweets.into_iter().chain(search_tweets.into_iter()) {
+        if seen_ids.insert(t.id.clone()) {
+            tweets.push(t);
+        }
+    }
 
     let now = chrono::Utc::now();
     let mut posts: Vec<FeedPost> = Vec::new();
@@ -337,6 +465,15 @@ pub async fn feed(
     // Sort by freshest first (lowest age)
     posts.sort_by_key(|p| p.age_minutes);
     posts.truncate(count);
+
+    // Auto-add high-value accounts from search to watchlist (silent, never fails)
+    if let Ok(store) = IntelStore::open() {
+        for p in &posts {
+            if p.author_followers >= 10_000 {
+                let _ = store.add_watchlist(&p.author, None, Some(topic), p.author_followers as i64);
+            }
+        }
+    }
 
     let result = FeedResult {
         topic: topic.to_string(),
