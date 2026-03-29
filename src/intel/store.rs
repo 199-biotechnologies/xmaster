@@ -10,6 +10,23 @@ use crate::config::config_dir;
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone, Serialize)]
+pub struct WatchlistEntry {
+    pub username: String,
+    pub user_id: Option<String>,
+    pub topic: Option<String>,
+    pub followers: i64,
+    pub added_at: i64,
+}
+
+#[derive(Debug, Clone)]
+pub struct PendingReply {
+    pub id: i64,
+    pub reply_tweet_id: String,
+    pub target_username: Option<String>,
+    pub performed_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
 pub struct PostRecord {
     pub tweet_id: String,
     pub text: String,
@@ -131,6 +148,17 @@ impl IntelStore {
                 target_followers INTEGER
             );
 
+            CREATE TABLE IF NOT EXISTS watchlist_accounts (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                username    TEXT UNIQUE NOT NULL,
+                user_id     TEXT,
+                topic       TEXT,
+                followers   INTEGER NOT NULL DEFAULT 0,
+                added_at    INTEGER NOT NULL
+            );
+
+            -- Add reply_tweet_id if not exists (safe for existing DBs)
+            -- SQLite doesn't support IF NOT EXISTS for ALTER, so we use a pragma check
             CREATE TABLE IF NOT EXISTS timing_stats (
                 id                  INTEGER PRIMARY KEY AUTOINCREMENT,
                 day_of_week         INTEGER NOT NULL,
@@ -142,6 +170,111 @@ impl IntelStore {
                 last_updated        INTEGER NOT NULL
             );
             ",
+        )?;
+
+        // Safe migration: add reply_tweet_id to engagement_actions if not present
+        let cols: Vec<String> = self.conn
+            .prepare("PRAGMA table_info(engagement_actions)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if !cols.iter().any(|c| c == "reply_tweet_id") {
+            self.conn.execute_batch(
+                "ALTER TABLE engagement_actions ADD COLUMN reply_tweet_id TEXT;"
+            )?;
+        }
+
+        Ok(())
+    }
+
+    // -- watchlist ------------------------------------------------------------
+
+    pub fn add_watchlist(&self, username: &str, user_id: Option<&str>, topic: Option<&str>, followers: i64) -> Result<(), rusqlite::Error> {
+        let now = Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT OR REPLACE INTO watchlist_accounts (username, user_id, topic, followers, added_at)
+             VALUES (LOWER(?1), ?2, ?3, ?4, ?5)",
+            params![username.to_lowercase(), user_id, topic, followers, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn remove_watchlist(&self, username: &str) -> Result<bool, rusqlite::Error> {
+        let changed = self.conn.execute(
+            "DELETE FROM watchlist_accounts WHERE username = LOWER(?1)",
+            params![username.to_lowercase()],
+        )?;
+        Ok(changed > 0)
+    }
+
+    pub fn list_watchlist(&self) -> Result<Vec<WatchlistEntry>, rusqlite::Error> {
+        let mut stmt = self.conn.prepare(
+            "SELECT username, user_id, topic, followers, added_at FROM watchlist_accounts ORDER BY added_at DESC"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok(WatchlistEntry {
+                username: row.get(0)?,
+                user_id: row.get(1)?,
+                topic: row.get(2)?,
+                followers: row.get(3)?,
+                added_at: row.get(4)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Log a reply with the reply tweet ID for tracking reply-backs.
+    pub fn log_reply(
+        &self,
+        target_tweet_id: &str,
+        target_user_id: Option<&str>,
+        target_username: Option<&str>,
+        target_followers: Option<i64>,
+        reply_tweet_id: &str,
+    ) -> Result<(), rusqlite::Error> {
+        let performed_at = Utc::now().timestamp();
+        self.conn.execute(
+            "INSERT INTO engagement_actions
+                (action_type, target_tweet_id, target_user_id, target_username,
+                 performed_at, target_followers, reply_tweet_id)
+             VALUES ('reply', ?1, ?2, LOWER(?3), ?4, ?5, ?6)",
+            params![
+                target_tweet_id,
+                target_user_id,
+                target_username.map(|u| u.to_lowercase()),
+                performed_at,
+                target_followers,
+                reply_tweet_id,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get pending replies that haven't been checked for reply-back yet.
+    pub fn get_pending_replies(&self, max_age_hours: i64) -> Result<Vec<PendingReply>, rusqlite::Error> {
+        let cutoff = Utc::now().timestamp() - (max_age_hours * 3600);
+        let mut stmt = self.conn.prepare(
+            "SELECT id, reply_tweet_id, target_username, performed_at
+             FROM engagement_actions
+             WHERE action_type = 'reply' AND got_reply_back IS NULL
+               AND reply_tweet_id IS NOT NULL AND performed_at > ?1
+             ORDER BY performed_at DESC"
+        )?;
+        let rows = stmt.query_map(params![cutoff], |row| {
+            Ok(PendingReply {
+                id: row.get(0)?,
+                reply_tweet_id: row.get(1)?,
+                target_username: row.get(2)?,
+                performed_at: row.get(3)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// Mark a reply as having received (or not) a reply-back.
+    pub fn set_reply_back(&self, action_id: i64, got_reply: bool) -> Result<(), rusqlite::Error> {
+        self.conn.execute(
+            "UPDATE engagement_actions SET got_reply_back = ?1 WHERE id = ?2",
+            params![got_reply as i32, action_id],
         )?;
         Ok(())
     }

@@ -6,14 +6,70 @@ use crate::providers::xapi::XApi;
 use std::sync::Arc;
 
 /// Snapshot all recent posts (designed for cron). Default: last 48 hours.
+/// Also checks pending replies for reply-backs.
 pub async fn track_run(
     ctx: Arc<AppContext>,
     format: OutputFormat,
 ) -> Result<(), XmasterError> {
     let tracker = PostTracker::open()?;
     let summary = tracker.snapshot_all_recent(&ctx, 48).await?;
-    output::render(format, &summary, None);
+
+    // Check pending replies for reply-backs (silent, never fails the run)
+    let reply_backs_checked = check_reply_backs(&ctx).await;
+
+    let mut meta = serde_json::json!({});
+    if reply_backs_checked > 0 {
+        meta["reply_backs_checked"] = reply_backs_checked.into();
+    }
+
+    output::render(format, &summary, Some(meta));
     Ok(())
+}
+
+/// Check if targets replied back to our replies.
+async fn check_reply_backs(ctx: &AppContext) -> u32 {
+    let store = match crate::intel::store::IntelStore::open() {
+        Ok(s) => s,
+        Err(_) => return 0,
+    };
+
+    let pending = match store.get_pending_replies(72) {
+        Ok(p) => p,
+        Err(_) => return 0,
+    };
+
+    if pending.is_empty() {
+        return 0;
+    }
+
+    let api = XApi::new(std::sync::Arc::new(ctx.clone()));
+    let mut checked = 0u32;
+
+    for pr in &pending {
+        // Fetch replies to our reply tweet
+        match api.get_replies(&pr.reply_tweet_id, 10).await {
+            Ok(replies) => {
+                let target_user = pr.target_username.as_deref().unwrap_or("");
+                let got_reply = replies.iter().any(|r| {
+                    r.author_username.as_deref()
+                        .map(|u| u.to_lowercase() == target_user.to_lowercase())
+                        .unwrap_or(false)
+                });
+                let _ = store.set_reply_back(pr.id, got_reply);
+                checked += 1;
+            }
+            Err(_) => {
+                // Timeout old pending replies (>72h without check = assume no reply)
+                let age_hours = (chrono::Utc::now().timestamp() - pr.performed_at) / 3600;
+                if age_hours > 72 {
+                    let _ = store.set_reply_back(pr.id, false);
+                    checked += 1;
+                }
+            }
+        }
+    }
+
+    checked
 }
 
 /// Show which posts are being tracked and their latest snapshot age.

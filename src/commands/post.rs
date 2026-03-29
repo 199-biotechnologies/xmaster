@@ -174,6 +174,20 @@ pub async fn execute(
             quote_id.as_deref(),
             Some(analysis.score as f64),
         );
+
+        // Log reply for reciprocity tracking
+        if let Some(ref target_id) = reply_id {
+            // Fetch target tweet to get author info
+            if let Ok(target_tweet) = api.get_tweet(target_id).await {
+                let _ = store.log_reply(
+                    target_id,
+                    target_tweet.author_id.as_deref(),
+                    target_tweet.author_username.as_deref(),
+                    target_tweet.author_followers.map(|f| f as i64),
+                    &result.id,
+                );
+            }
+        }
     } else if format == OutputFormat::Table {
         eprintln!("Warning: Could not open intelligence store");
     }
