@@ -101,6 +101,7 @@ pub fn execute(format: OutputFormat) {
             // Intelligence
             "analyze".into(), "engage recommend".into(),
             "track run".into(), "track status".into(),
+            "track followers".into(), "track growth".into(),
             "report daily".into(), "report weekly".into(),
             "suggest best-time".into(), "suggest next-post".into(),
             // Scheduling

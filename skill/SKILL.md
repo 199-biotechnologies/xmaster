@@ -210,6 +210,8 @@ xmaster suggest next-post          # Cannibalization guard
 xmaster suggest best-time          # Historical timing heatmap
 xmaster report daily|weekly        # Performance digest
 xmaster track run                  # Snapshot recent post metrics
+xmaster track followers            # Track new/lost followers
+xmaster track growth -d 30         # Follower growth history
 
 # Engagement intelligence
 xmaster engage recommend --topic "niche" [--min-followers 1000] [-c 5]
@@ -221,7 +223,8 @@ xmaster block|unblock|mute|unmute <username>
 
 # Reading
 xmaster me | xmaster user <username> | xmaster metrics <id>
-xmaster timeline [--user USERNAME] [--since 12h] [--before 7d] [--sort impressions] | xmaster mentions
+xmaster timeline [--user USERNAME] [--since 12h] [--before 7d] [--sort impressions]
+xmaster mentions | xmaster followers|following <username>
 xmaster bookmarks list [--unread] | xmaster bookmarks sync [-c 200]
 xmaster bookmarks search "query" | xmaster bookmarks export [-o FILE] [--unread]
 xmaster bookmarks digest [-d 7] | xmaster bookmarks stats

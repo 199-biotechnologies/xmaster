@@ -128,10 +128,12 @@ xmaster post "Hello from xmaster"
 | `read` | Full post lookup (text, author, date, metrics, media) | `xmaster read 1234567890` |
 | `replies` | Get all replies/comments on a post | `xmaster replies 1234567890 -c 30` |
 | `metrics` | Detailed engagement metrics | `xmaster metrics 1234567890` |
-| `timeline` | View home or user timeline | `xmaster timeline --user elonmusk` |
+| `timeline` | View home or user timeline | `xmaster timeline --user elonmusk --since 24h --sort impressions` |
 | `mentions` | View your mentions | `xmaster mentions -c 20` |
 | `user` | Get user profile info | `xmaster user elonmusk` |
 | `me` | Get your own profile info | `xmaster me` |
+| `followers` | List your followers | `xmaster followers longevityboris -c 100` |
+| `following` | List who you follow | `xmaster following longevityboris` |
 
 The `read` command returns everything about a post in one call: author, full text, date, likes, retweets, replies, impressions, bookmarks, and media URLs. Accepts tweet IDs or full x.com URLs.
 
@@ -196,6 +198,8 @@ Posts are stored locally in SQLite — no X Ads API needed, pure local schedulin
 | `report daily` | Daily performance digest | `xmaster report daily` |
 | `report weekly` | Weekly performance digest | `xmaster report weekly` |
 | `track run` | Snapshot recent post metrics | `xmaster track run` |
+| `track followers` | Track follower changes (new/lost) | `xmaster track followers` |
+| `track growth` | Follower growth history | `xmaster track growth -d 30` |
 | `engage recommend` | Find high-ROI reply targets | `xmaster engage recommend --topic "AI" -c 10` |
 
 ### Lists
