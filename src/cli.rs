@@ -379,6 +379,11 @@ pub enum EngageCommands {
         #[arg(long, short, default_value = "5")]
         count: usize,
     },
+    /// Manage your niche watchlist (accounts you track but don't follow)
+    Watchlist {
+        #[command(subcommand)]
+        action: WatchlistCommands,
+    },
     /// Find fresh posts from big accounts to reply to NOW
     Feed {
         /// Topic/niche to find posts in
@@ -392,6 +397,25 @@ pub enum EngageCommands {
         /// Number of posts to return
         #[arg(long, short, default_value = "10")]
         count: usize,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum WatchlistCommands {
+    /// Add an account to your watchlist
+    Add {
+        /// Username (without @)
+        username: String,
+        /// Topic/niche tag
+        #[arg(long)]
+        topic: Option<String>,
+    },
+    /// List watched accounts
+    List,
+    /// Remove an account from your watchlist
+    Remove {
+        /// Username (without @)
+        username: String,
     },
 }
 
