@@ -976,6 +976,14 @@ impl XApi {
         self.request_data(Method::GET, &url, None).await
     }
 
+    pub async fn get_user_by_id(&self, user_id: &str) -> Result<UserResponse, XmasterError> {
+        let url = format!(
+            "{BASE}/users/{user_id}?{fields}",
+            fields = Self::user_fields_param()
+        );
+        self.request_data(Method::GET, &url, None).await
+    }
+
     pub async fn get_me(&self) -> Result<UserResponse, XmasterError> {
         let url = format!("{BASE}/users/me?{fields}", fields = Self::user_fields_param());
         self.request_data(Method::GET, &url, None).await

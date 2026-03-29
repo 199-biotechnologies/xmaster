@@ -15,6 +15,18 @@ pub struct AppConfig {
     pub settings: Settings,
     #[serde(default)]
     pub style: Style,
+    #[serde(default)]
+    pub account: AccountConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct AccountConfig {
+    /// Whether the user has X Premium. Set via: xmaster config set account.premium true
+    #[serde(default)]
+    pub premium: bool,
+    /// Premium tier: "basic", "premium", "premium_plus". Default: "premium"
+    #[serde(default)]
+    pub premium_tier: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]

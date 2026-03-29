@@ -129,6 +129,8 @@ pub async fn dispatch(
         Commands::Track { action } => match action {
             TrackCommands::Run => track::track_run(ctx, format).await,
             TrackCommands::Status => track::track_status(ctx, format).await,
+            TrackCommands::Followers => track::track_followers(ctx, format).await,
+            TrackCommands::Growth { days } => track::follower_growth(ctx, format, *days).await,
         },
         Commands::Report { action } => match action {
             ReportCommands::Daily => report::daily(ctx, format).await,

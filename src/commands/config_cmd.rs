@@ -153,10 +153,22 @@ fn set_silent(key: &str, value: &str) -> Result<Option<String>, XmasterError> {
 
     // Parse key path like "keys.api_key" -> ["keys", "api_key"]
     let parts: Vec<&str> = key.split('.').collect();
+
+    // Infer TOML type from value string
+    let toml_value = if value == "true" {
+        toml::Value::Boolean(true)
+    } else if value == "false" {
+        toml::Value::Boolean(false)
+    } else if let Ok(n) = value.parse::<i64>() {
+        toml::Value::Integer(n)
+    } else {
+        toml::Value::String(value.to_string())
+    };
+
     let previous = match parts.len() {
         1 => {
-            let prev = doc.get(parts[0]).and_then(|v| v.as_str()).map(String::from);
-            doc.insert(parts[0].to_string(), toml::Value::String(value.to_string()));
+            let prev = doc.get(parts[0]).map(|v| v.to_string());
+            doc.insert(parts[0].to_string(), toml_value);
             prev
         }
         2 => {
@@ -164,12 +176,12 @@ fn set_silent(key: &str, value: &str) -> Result<Option<String>, XmasterError> {
                 .entry(parts[0].to_string())
                 .or_insert_with(|| toml::Value::Table(toml::Table::new()));
             let prev = if let toml::Value::Table(ref t) = section {
-                t.get(parts[1]).and_then(|v| v.as_str()).map(String::from)
+                t.get(parts[1]).map(|v| v.to_string())
             } else {
                 None
             };
             if let toml::Value::Table(ref mut t) = section {
-                t.insert(parts[1].to_string(), toml::Value::String(value.to_string()));
+                t.insert(parts[1].to_string(), toml_value);
             }
             prev
         }

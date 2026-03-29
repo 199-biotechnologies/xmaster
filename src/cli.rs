@@ -431,6 +431,14 @@ pub enum TrackCommands {
     Run,
     /// Show tracking status for recent posts
     Status,
+    /// Snapshot follower count and detect new/lost followers
+    Followers,
+    /// Show follower growth history
+    Growth {
+        /// Number of days of history [default: 30]
+        #[arg(long, short, default_value = "30")]
+        days: i64,
+    },
 }
 
 #[derive(Subcommand)]

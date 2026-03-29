@@ -157,6 +157,20 @@ impl PostTracker {
                 quotes INTEGER NOT NULL DEFAULT 0,
                 profile_clicks INTEGER NOT NULL DEFAULT 0
             );
+            CREATE TABLE IF NOT EXISTS account_snapshots (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_at INTEGER NOT NULL,
+                followers INTEGER NOT NULL DEFAULT 0,
+                following INTEGER NOT NULL DEFAULT 0,
+                tweets INTEGER NOT NULL DEFAULT 0
+            );
+            CREATE TABLE IF NOT EXISTS follower_list (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                snapshot_at INTEGER NOT NULL,
+                user_id TEXT NOT NULL,
+                username TEXT NOT NULL,
+                followers INTEGER NOT NULL DEFAULT 0
+            );
             CREATE TABLE IF NOT EXISTS timing_stats (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 day_of_week INTEGER NOT NULL,
@@ -796,6 +810,165 @@ async fn fetch_tweet_metrics(
         quotes: pub_m.quote_count,
         profile_clicks: non_pub.user_profile_clicks,
     })
+}
+
+// ---------------------------------------------------------------------------
+// Follower tracking
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct AccountSnapshot {
+    pub followers: i64,
+    pub following: i64,
+    pub tweets: i64,
+    pub followers_change: i64,
+    pub following_change: i64,
+    pub snapshot_at: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FollowerChange {
+    pub new_followers: Vec<FollowerInfo>,
+    pub lost_followers: Vec<FollowerInfo>,
+    pub current_total: i64,
+    pub previous_total: i64,
+    pub net_change: i64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FollowerInfo {
+    pub username: String,
+    pub followers: i64,
+}
+
+impl PostTracker {
+    /// Snapshot the current account stats (followers, following, tweets).
+    pub fn snapshot_account(&self, followers: i64, following: i64, tweets: i64) -> Result<AccountSnapshot, XmasterError> {
+        let now = Utc::now();
+        let now_ts = now.timestamp();
+
+        self.conn.execute(
+            "INSERT INTO account_snapshots (snapshot_at, followers, following, tweets) VALUES (?1, ?2, ?3, ?4)",
+            params![now_ts, followers, following, tweets],
+        ).map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+        // Get previous snapshot for change calculation
+        let prev: Option<(i64, i64)> = self.conn.query_row(
+            "SELECT followers, following FROM account_snapshots WHERE snapshot_at < ?1 ORDER BY snapshot_at DESC LIMIT 1",
+            params![now_ts],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        ).optional().map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+        let (prev_followers, prev_following) = prev.unwrap_or((followers, following));
+
+        Ok(AccountSnapshot {
+            followers,
+            following,
+            tweets,
+            followers_change: followers - prev_followers,
+            following_change: following - prev_following,
+            snapshot_at: now.to_rfc3339(),
+        })
+    }
+
+    /// Store the current follower list for diffing.
+    pub fn store_follower_list(&self, followers: &[(String, String, i64)]) -> Result<(), XmasterError> {
+        let now_ts = Utc::now().timestamp();
+        let tx = self.conn.unchecked_transaction()
+            .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+        for (user_id, username, follower_count) in followers {
+            tx.execute(
+                "INSERT INTO follower_list (snapshot_at, user_id, username, followers) VALUES (?1, ?2, ?3, ?4)",
+                params![now_ts, user_id, username, follower_count],
+            ).map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+        }
+        tx.commit().map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+        Ok(())
+    }
+
+    /// Diff the current follower list against the previous snapshot.
+    pub fn diff_followers(&self, current: &[(String, String, i64)]) -> Result<FollowerChange, XmasterError> {
+        // Get the most recent snapshot timestamp
+        let latest_ts: Option<i64> = self.conn.query_row(
+            "SELECT MAX(snapshot_at) FROM follower_list",
+            [],
+            |row| row.get(0),
+        ).optional().map_err(|e| XmasterError::Config(format!("DB error: {e}")))?.flatten();
+
+        let current_set: std::collections::HashMap<&str, (&str, i64)> = current.iter()
+            .map(|(uid, uname, fc)| (uid.as_str(), (uname.as_str(), *fc)))
+            .collect();
+
+        let mut new_followers = Vec::new();
+        let mut lost_followers = Vec::new();
+
+        if let Some(ts) = latest_ts {
+            // Get previous follower user_ids
+            let mut stmt = self.conn.prepare(
+                "SELECT user_id, username, followers FROM follower_list WHERE snapshot_at = ?1"
+            ).map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+            let prev_rows: Vec<(String, String, i64)> = stmt.query_map(params![ts], |row| {
+                Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+            }).map_err(|e| XmasterError::Config(format!("DB error: {e}")))?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+            let prev_set: std::collections::HashSet<String> = prev_rows.iter().map(|(uid, _, _)| uid.clone()).collect();
+            let curr_ids: std::collections::HashSet<&str> = current_set.keys().copied().collect();
+
+            // New: in current but not in previous
+            for (uid, (uname, fc)) in &current_set {
+                if !prev_set.contains(*uid) {
+                    new_followers.push(FollowerInfo { username: uname.to_string(), followers: *fc });
+                }
+            }
+
+            // Lost: in previous but not in current
+            for (uid, uname, fc) in &prev_rows {
+                if !curr_ids.contains(uid.as_str()) {
+                    lost_followers.push(FollowerInfo { username: uname.clone(), followers: *fc });
+                }
+            }
+        }
+
+        let current_total = current.len() as i64;
+        let previous_total = current_total - new_followers.len() as i64 + lost_followers.len() as i64;
+
+        Ok(FollowerChange {
+            new_followers,
+            lost_followers,
+            current_total,
+            previous_total,
+            net_change: current_total - previous_total,
+        })
+    }
+
+    /// Get follower growth history.
+    pub fn follower_history(&self, days: i64) -> Result<Vec<AccountSnapshot>, XmasterError> {
+        let cutoff = Utc::now().timestamp() - (days * 86400);
+        let mut stmt = self.conn.prepare(
+            "SELECT snapshot_at, followers, following, tweets FROM account_snapshots
+             WHERE snapshot_at > ?1 ORDER BY snapshot_at ASC"
+        ).map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+        let rows = stmt.query_map(params![cutoff], |row| {
+            let ts: i64 = row.get(0)?;
+            Ok(AccountSnapshot {
+                followers: row.get(1)?,
+                following: row.get(2)?,
+                tweets: row.get(3)?,
+                followers_change: 0,
+                following_change: 0,
+                snapshot_at: DateTime::from_timestamp(ts, 0)
+                    .map(|d| d.to_rfc3339())
+                    .unwrap_or_default(),
+            })
+        }).map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
+
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|e| XmasterError::Config(format!("DB error: {e}")))
+    }
 }
 
 // ---------------------------------------------------------------------------
