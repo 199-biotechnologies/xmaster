@@ -68,33 +68,44 @@ impl Tableable for ConfigSetResult {
 
 #[derive(Serialize)]
 struct ConfigCheckResult {
-    x_auth: AuthStatus,
-    xai_auth: AuthStatus,
+    x_auth: SubsystemStatus,
+    xai_auth: SubsystemStatus,
+    oauth2_bookmarks: SubsystemStatus,
+    web_reply_fallback: SubsystemStatus,
+    database: SubsystemStatus,
+    scheduler: SubsystemStatus,
 }
 
 #[derive(Serialize)]
-struct AuthStatus {
+struct SubsystemStatus {
     configured: bool,
-    valid: bool,
+    healthy: bool,
     detail: String,
 }
+
+// Keep old name as alias for backwards compat in existing code patterns
+type AuthStatus = SubsystemStatus;
 
 impl Tableable for ConfigCheckResult {
     fn to_table(&self) -> comfy_table::Table {
         let mut table = comfy_table::Table::new();
-        table.set_header(vec!["Provider", "Configured", "Valid", "Detail"]);
-        table.add_row(vec![
-            "X API",
-            if self.x_auth.configured { "Yes" } else { "No" },
-            if self.x_auth.valid { "Yes" } else { "No" },
-            &self.x_auth.detail,
-        ]);
-        table.add_row(vec![
-            "xAI",
-            if self.xai_auth.configured { "Yes" } else { "No" },
-            if self.xai_auth.valid { "Yes" } else { "No" },
-            &self.xai_auth.detail,
-        ]);
+        table.set_header(vec!["Subsystem", "Configured", "Healthy", "Detail"]);
+        let rows: Vec<(&str, &SubsystemStatus)> = vec![
+            ("X API (OAuth1)", &self.x_auth),
+            ("xAI", &self.xai_auth),
+            ("OAuth2 Bookmarks", &self.oauth2_bookmarks),
+            ("Web Reply Fallback", &self.web_reply_fallback),
+            ("Database", &self.database),
+            ("Scheduler", &self.scheduler),
+        ];
+        for (name, s) in rows {
+            table.add_row(vec![
+                name,
+                if s.configured { "Yes" } else { "No" },
+                if s.healthy { "Yes" } else { "No" },
+                &s.detail,
+            ]);
+        }
         table
     }
 }
@@ -207,6 +218,29 @@ fn set_silent(key: &str, value: &str) -> Result<Option<String>, XmasterError> {
 }
 
 pub async fn set(format: OutputFormat, key: &str, value: &str) -> Result<(), XmasterError> {
+    // Validate the key is a known config path to catch typos early
+    if !VALID_CONFIG_KEYS.contains(&key) {
+        // Check for close matches to suggest corrections
+        let suggestions: Vec<&&str> = VALID_CONFIG_KEYS
+            .iter()
+            .filter(|k| {
+                k.contains(&key.split('.').last().unwrap_or(key))
+                    || key.contains(&k.split('.').last().unwrap_or(k))
+            })
+            .collect();
+        let hint = if suggestions.is_empty() {
+            String::new()
+        } else {
+            format!(
+                ". Did you mean: {}?",
+                suggestions.iter().map(|s| format!("'{s}'")).collect::<Vec<_>>().join(", ")
+            )
+        };
+        return Err(XmasterError::Config(format!(
+            "Unknown config key '{key}'{hint} Run 'xmaster config show' to see valid keys."
+        )));
+    }
+
     let previous = set_silent(key, value)?;
 
     let display = ConfigSetResult {
@@ -218,6 +252,17 @@ pub async fn set(format: OutputFormat, key: &str, value: &str) -> Result<(), Xma
     Ok(())
 }
 
+/// All valid config key paths that `config set` accepts.
+const VALID_CONFIG_KEYS: &[&str] = &[
+    "keys.api_key", "keys.api_secret", "keys.access_token", "keys.access_token_secret",
+    "keys.bearer_token", "keys.xai",
+    "keys.oauth2_client_id", "keys.oauth2_client_secret",
+    "keys.oauth2_access_token", "keys.oauth2_refresh_token",
+    "keys.web_ct0", "keys.web_auth_token", "keys.graphql_create_tweet_id",
+    "settings.timeout", "settings.count",
+    "style.voice",
+];
+
 pub async fn check(ctx: Arc<AppContext>, format: OutputFormat) -> Result<(), XmasterError> {
     let x_configured = ctx.config.has_x_auth();
     let xai_configured = ctx.config.has_xai_auth();
@@ -227,26 +272,26 @@ pub async fn check(ctx: Arc<AppContext>, format: OutputFormat) -> Result<(), Xma
         match api.get_me().await {
             Ok(user) => AuthStatus {
                 configured: true,
-                valid: true,
+                healthy: true,
                 detail: format!("Authenticated as @{}", user.username),
             },
             Err(e) => AuthStatus {
                 configured: true,
-                valid: false,
+                healthy: false,
                 detail: format!("Auth failed: {e}"),
             },
         }
     } else {
         AuthStatus {
             configured: false,
-            valid: false,
+            healthy: false,
             detail: "X API credentials not set".into(),
         }
     };
 
     let xai_auth = AuthStatus {
         configured: xai_configured,
-        valid: xai_configured,
+        healthy: xai_configured,
         detail: if xai_configured {
             "xAI API key configured".into()
         } else {
@@ -254,7 +299,83 @@ pub async fn check(ctx: Arc<AppContext>, format: OutputFormat) -> Result<(), Xma
         },
     };
 
-    let display = ConfigCheckResult { x_auth, xai_auth };
+    // OAuth2 bookmarks check
+    let oauth2_configured = !ctx.config.keys.oauth2_client_id.is_empty()
+        && !ctx.config.keys.oauth2_client_secret.is_empty();
+    let oauth2_has_token = !ctx.config.keys.oauth2_access_token.is_empty();
+    let oauth2_bookmarks = AuthStatus {
+        configured: oauth2_configured,
+        healthy: oauth2_has_token,
+        detail: if oauth2_has_token {
+            "OAuth2 tokens present".into()
+        } else if oauth2_configured {
+            "Client credentials set but no token — run: xmaster config auth".into()
+        } else {
+            "OAuth2 not configured — needed for bookmarks".into()
+        },
+    };
+
+    // Web reply fallback
+    let web_configured = ctx.config.has_web_cookies();
+    let web_reply_fallback = AuthStatus {
+        configured: web_configured,
+        healthy: web_configured,
+        detail: if web_configured {
+            "Web cookies present — reply fallback active".into()
+        } else {
+            "Not configured — run: xmaster config web-login".into()
+        },
+    };
+
+    // Database health
+    let db_status = match crate::intel::tracker::PostTracker::open() {
+        Ok(tracker) => {
+            let status = tracker.tracking_status();
+            match status {
+                Ok(ts) => AuthStatus {
+                    configured: true,
+                    healthy: true,
+                    detail: format!("{} tracked posts", ts.total),
+                },
+                Err(e) => AuthStatus {
+                    configured: true,
+                    healthy: false,
+                    detail: format!("DB query error: {e}"),
+                },
+            }
+        }
+        Err(e) => AuthStatus {
+            configured: false,
+            healthy: false,
+            detail: format!("DB open error: {e}"),
+        },
+    };
+
+    // Scheduler
+    let scheduler_status = match crate::intel::scheduler::PostScheduler::open() {
+        Ok(sched) => {
+            let pending = sched.list(Some("pending")).map(|v| v.len()).unwrap_or(0);
+            AuthStatus {
+                configured: true,
+                healthy: true,
+                detail: format!("{} pending scheduled posts", pending),
+            }
+        }
+        Err(e) => AuthStatus {
+            configured: false,
+            healthy: false,
+            detail: format!("Scheduler error: {e}"),
+        },
+    };
+
+    let display = ConfigCheckResult {
+        x_auth,
+        xai_auth,
+        oauth2_bookmarks,
+        web_reply_fallback,
+        database: db_status,
+        scheduler: scheduler_status,
+    };
     output::render(format, &display, None);
     Ok(())
 }

@@ -1,6 +1,6 @@
 use chrono::{Datelike, Timelike, Utc};
 use rusqlite::{params, Connection, OptionalExtension};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 use crate::config::config_dir;
@@ -77,6 +77,79 @@ pub struct ReciprocatorInfo {
     pub replies_received: i64,
     pub reply_rate: f64,
     pub avg_followers: i64,
+}
+
+// ---------------------------------------------------------------------------
+// ReplyStyle classification
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ReplyStyle {
+    Question,
+    DataPoint,
+    Counterpoint,
+    Anecdote,
+    Humor,
+    Agreement,
+}
+
+impl ReplyStyle {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Question => "question",
+            Self::DataPoint => "data_point",
+            Self::Counterpoint => "counterpoint",
+            Self::Anecdote => "anecdote",
+            Self::Humor => "humor",
+            Self::Agreement => "agreement",
+        }
+    }
+}
+
+impl std::fmt::Display for ReplyStyle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+/// Classify a reply's rhetorical style using simple heuristics.
+pub fn classify_reply(text: &str) -> ReplyStyle {
+    let lower = text.to_lowercase();
+
+    if text.contains('?') {
+        return ReplyStyle::Question;
+    }
+
+    // DataPoint: numbers, percentages, stats
+    if lower.contains('%')
+        || lower.chars().any(|c| c.is_ascii_digit())
+            && (lower.contains("study") || lower.contains("data") || lower.contains("stat"))
+    {
+        return ReplyStyle::DataPoint;
+    }
+
+    // Counterpoint: disagreement markers
+    let counterpoint_markers = ["but ", "however", "actually", "disagree", "on the other hand"];
+    if counterpoint_markers.iter().any(|m| lower.contains(m)) {
+        return ReplyStyle::Counterpoint;
+    }
+
+    // Anecdote: personal experience markers
+    let anecdote_markers = [
+        "i've ", "i tested", "in my experience", "i found", "i noticed",
+        "i tried", "personally", "my own",
+    ];
+    if anecdote_markers.iter().any(|m| lower.contains(m)) {
+        return ReplyStyle::Anecdote;
+    }
+
+    // Humor: casual tone markers
+    let humor_markers = ["lol", "lmao", "haha", "rofl", "😂", "🤣", "💀"];
+    if humor_markers.iter().any(|m| lower.contains(m)) {
+        return ReplyStyle::Humor;
+    }
+
+    ReplyStyle::Agreement
 }
 
 // ---------------------------------------------------------------------------
@@ -175,7 +248,7 @@ impl IntelStore {
             ",
         )?;
 
-        // Safe migration: add reply_tweet_id to engagement_actions if not present
+        // Safe migrations: add columns if not present
         let cols: Vec<String> = self.conn
             .prepare("PRAGMA table_info(engagement_actions)")?
             .query_map([], |row| row.get::<_, String>(1))?
@@ -185,8 +258,66 @@ impl IntelStore {
                 "ALTER TABLE engagement_actions ADD COLUMN reply_tweet_id TEXT;"
             )?;
         }
+        if !cols.iter().any(|c| c == "reply_style") {
+            self.conn.execute_batch(
+                "ALTER TABLE engagement_actions ADD COLUMN reply_style TEXT;"
+            )?;
+        }
+
+        // Safe migration: add analysis columns to posts if not present
+        let post_cols: Vec<String> = self.conn
+            .prepare("PRAGMA table_info(posts)")?
+            .query_map([], |row| row.get::<_, String>(1))?
+            .collect::<Result<Vec<_>, _>>()?;
+        if !post_cols.iter().any(|c| c == "analysis_json") {
+            self.conn.execute_batch(
+                "ALTER TABLE posts ADD COLUMN analysis_json TEXT;"
+            )?;
+        }
+        if !post_cols.iter().any(|c| c == "analysis_version") {
+            self.conn.execute_batch(
+                "ALTER TABLE posts ADD COLUMN analysis_version INTEGER DEFAULT 1;"
+            )?;
+        }
+        if !post_cols.iter().any(|c| c == "scheduled_post_id") {
+            self.conn.execute_batch(
+                "ALTER TABLE posts ADD COLUMN scheduled_post_id TEXT;"
+            )?;
+        }
+
+        // reply_outcomes view: join engagement_actions (replies) to metric snapshots
+        self.conn.execute_batch(
+            "CREATE VIEW IF NOT EXISTS reply_outcomes AS
+             SELECT ea.id AS action_id,
+                    ea.target_tweet_id,
+                    ea.target_username,
+                    ea.target_followers,
+                    ea.reply_tweet_id,
+                    ea.reply_style,
+                    ea.performed_at,
+                    ea.got_reply_back,
+                    ms.likes,
+                    ms.retweets,
+                    ms.replies,
+                    ms.impressions,
+                    ms.bookmarks
+             FROM engagement_actions ea
+             LEFT JOIN metric_snapshots ms
+               ON ms.tweet_id = ea.reply_tweet_id
+               AND ms.id = (
+                   SELECT MAX(ms2.id) FROM metric_snapshots ms2
+                   WHERE ms2.tweet_id = ea.reply_tweet_id
+               )
+             WHERE ea.action_type = 'reply'
+               AND ea.reply_tweet_id IS NOT NULL;"
+        )?;
 
         Ok(())
+    }
+
+    /// Static helper: classify a reply's rhetorical style.
+    pub fn classify_reply_style(text: &str) -> ReplyStyle {
+        classify_reply(text)
     }
 
     // -- watchlist ------------------------------------------------------------
@@ -225,7 +356,7 @@ impl IntelStore {
         rows.collect()
     }
 
-    /// Log a reply with the reply tweet ID for tracking reply-backs.
+    /// Log a reply with the reply tweet ID and style for tracking reply-backs.
     pub fn log_reply(
         &self,
         target_tweet_id: &str,
@@ -233,13 +364,14 @@ impl IntelStore {
         target_username: Option<&str>,
         target_followers: Option<i64>,
         reply_tweet_id: &str,
+        reply_style: Option<&ReplyStyle>,
     ) -> Result<(), rusqlite::Error> {
         let performed_at = Utc::now().timestamp();
         self.conn.execute(
             "INSERT INTO engagement_actions
                 (action_type, target_tweet_id, target_user_id, target_username,
-                 performed_at, target_followers, reply_tweet_id)
-             VALUES ('reply', ?1, ?2, LOWER(?3), ?4, ?5, ?6)",
+                 performed_at, target_followers, reply_tweet_id, reply_style)
+             VALUES ('reply', ?1, ?2, LOWER(?3), ?4, ?5, ?6, ?7)",
             params![
                 target_tweet_id,
                 target_user_id,
@@ -247,6 +379,7 @@ impl IntelStore {
                 performed_at,
                 target_followers,
                 reply_tweet_id,
+                reply_style.map(|s| s.as_str()),
             ],
         )?;
         Ok(())
@@ -293,6 +426,8 @@ impl IntelStore {
         reply_to: Option<&str>,
         quote_of: Option<&str>,
         preflight_score: Option<f64>,
+        analysis_json: Option<&str>,
+        scheduled_post_id: Option<&str>,
     ) -> Result<(), rusqlite::Error> {
         let now = Utc::now();
         let posted_at = now.timestamp();
@@ -307,8 +442,9 @@ impl IntelStore {
             "INSERT OR IGNORE INTO posts
                 (tweet_id, text, content_type, char_count, has_link, has_media, has_poll,
                  hashtag_count, hook_text, posted_at, day_of_week, hour_of_day,
-                 reply_to_id, quote_of_id, preflight_score)
-             VALUES (?1,?2,?3,?4,?5,0,0,?6,?7,?8,?9,?10,?11,?12,?13)",
+                 reply_to_id, quote_of_id, preflight_score,
+                 analysis_json, analysis_version, scheduled_post_id)
+             VALUES (?1,?2,?3,?4,?5,0,0,?6,?7,?8,?9,?10,?11,?12,?13,?14,1,?15)",
             params![
                 tweet_id,
                 text,
@@ -323,9 +459,38 @@ impl IntelStore {
                 reply_to,
                 quote_of,
                 preflight_score,
+                analysis_json,
+                scheduled_post_id,
             ],
         )?;
         Ok(())
+    }
+
+    /// Convenience function to record a published post with full metadata.
+    /// Centralizes post recording logic: writes the post row, attaches analysis,
+    /// links to scheduled_posts when applicable, and logs reply metadata for replies.
+    #[allow(clippy::too_many_arguments)]
+    pub fn record_published_post(
+        &self,
+        tweet_id: &str,
+        text: &str,
+        content_type: &str,
+        reply_to: Option<&str>,
+        quote_of: Option<&str>,
+        preflight_score: Option<f64>,
+        analysis_json: Option<&str>,
+        scheduled_post_id: Option<&str>,
+    ) -> Result<(), rusqlite::Error> {
+        self.log_post(
+            tweet_id,
+            text,
+            content_type,
+            reply_to,
+            quote_of,
+            preflight_score,
+            analysis_json,
+            scheduled_post_id,
+        )
     }
 
     /// Record a metric snapshot for a tweet.
@@ -727,7 +892,7 @@ mod tests {
     fn log_and_retrieve_post() {
         let store = test_store();
         store
-            .log_post("tweet_001", "Hello world!", "opinion", None, None, Some(85.0))
+            .log_post("tweet_001", "Hello world!", "opinion", None, None, Some(85.0), None, None)
             .unwrap();
 
         let posts = store.get_post_history(10).unwrap();
@@ -743,11 +908,11 @@ mod tests {
     fn duplicate_tweet_id_ignored() {
         let store = test_store();
         store
-            .log_post("tweet_dup", "First", "opinion", None, None, None)
+            .log_post("tweet_dup", "First", "opinion", None, None, None, None, None)
             .unwrap();
         // INSERT OR IGNORE — second insert should not fail or create duplicate
         store
-            .log_post("tweet_dup", "Second", "opinion", None, None, None)
+            .log_post("tweet_dup", "Second", "opinion", None, None, None, None, None)
             .unwrap();
 
         let posts = store.get_post_history(10).unwrap();
@@ -792,7 +957,7 @@ mod tests {
     fn metric_snapshot_and_retrieval() {
         let store = test_store();
         store
-            .log_post("tweet_metrics", "Test post", "opinion", None, None, None)
+            .log_post("tweet_metrics", "Test post", "opinion", None, None, None, None, None)
             .unwrap();
         store
             .log_metric_snapshot("tweet_metrics", 10, 5, 3, 1000, 2, 1, 50, 60)
@@ -821,5 +986,64 @@ mod tests {
         let store = test_store();
         // Should not fail on empty database
         store.update_timing_stats().unwrap();
+    }
+
+    #[test]
+    fn classify_reply_question() {
+        assert_eq!(classify_reply("What do you think about this?"), ReplyStyle::Question);
+    }
+
+    #[test]
+    fn classify_reply_counterpoint() {
+        assert_eq!(classify_reply("However, the evidence suggests otherwise"), ReplyStyle::Counterpoint);
+    }
+
+    #[test]
+    fn classify_reply_anecdote() {
+        assert_eq!(classify_reply("I've been using this protocol for 6 months"), ReplyStyle::Anecdote);
+    }
+
+    #[test]
+    fn classify_reply_humor() {
+        assert_eq!(classify_reply("lol that's incredible"), ReplyStyle::Humor);
+    }
+
+    #[test]
+    fn classify_reply_agreement_fallback() {
+        assert_eq!(classify_reply("Great insight, totally agree"), ReplyStyle::Agreement);
+    }
+
+    #[test]
+    fn record_published_post_works() {
+        let store = test_store();
+        store
+            .record_published_post(
+                "tweet_pub_001",
+                "Test published post",
+                "text",
+                None,
+                None,
+                Some(75.0),
+                Some(r#"{"score":75}"#),
+                Some("sched_123"),
+            )
+            .unwrap();
+
+        let posts = store.get_post_history(10).unwrap();
+        assert_eq!(posts.len(), 1);
+        assert_eq!(posts[0].tweet_id, "tweet_pub_001");
+    }
+
+    #[test]
+    fn log_reply_with_style() {
+        let store = test_store();
+        let style = classify_reply("What makes you think that?");
+        store
+            .log_reply("target_001", None, Some("testuser"), Some(5000), "reply_001", Some(&style))
+            .unwrap();
+
+        let pending = store.get_pending_replies(24).unwrap();
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].reply_tweet_id, "reply_001");
     }
 }

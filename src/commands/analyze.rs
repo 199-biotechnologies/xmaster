@@ -1,6 +1,6 @@
 use crate::context::AppContext;
 use crate::errors::XmasterError;
-use crate::intel::preflight::{self, PreflightResult, Severity};
+use crate::intel::preflight::{self, AnalyzeContext, PreflightResult, Severity};
 use crate::output::{self, OutputFormat, Tableable};
 use serde::Serialize;
 use std::sync::Arc;
@@ -44,15 +44,79 @@ impl Tableable for AnalyzeDisplay {
         ]);
         table.add_row(vec![
             Cell::new("Characters"),
-            Cell::new(format!(
-                "{}/280",
-                self.result.features.char_count
-            )),
+            Cell::new(format!("{}/280", self.result.features.char_count)),
         ]);
         table.add_row(vec![
             Cell::new("Hook Strength"),
             Cell::new(format!("{}/100", self.result.features.hook_strength)),
         ]);
+
+        // Proxy signals section
+        let ps = &self.result.proxy_scores;
+        table.add_row(vec![
+            Cell::new("").add_attribute(Attribute::Dim),
+            Cell::new("--- Proxy Signals ---").add_attribute(Attribute::Dim),
+        ]);
+        let proxy_pairs: [(&str, f32); 9] = [
+            ("P(reply)", ps.reply),
+            ("P(quote)", ps.quote),
+            ("P(profile_click)", ps.profile_click),
+            ("P(follow)", ps.follow_author),
+            ("P(DM share)", ps.share_via_dm),
+            ("P(link share)", ps.share_via_copy_link),
+            ("P(dwell)", ps.dwell),
+            ("P(media_expand)", ps.media_expand),
+            ("P(negative)", ps.negative_risk),
+        ];
+        for (label, val) in &proxy_pairs {
+            if *val < 0.01 && *label != "P(negative)" {
+                continue;
+            }
+            let color = if *label == "P(negative)" {
+                if *val >= 0.30 {
+                    Color::Red
+                } else {
+                    Color::DarkGrey
+                }
+            } else if *val >= 0.40 {
+                Color::Green
+            } else if *val >= 0.20 {
+                Color::Yellow
+            } else {
+                Color::DarkGrey
+            };
+            table.add_row(vec![
+                Cell::new(label),
+                Cell::new(format!("{:.0}%", val * 100.0)).fg(color),
+            ]);
+        }
+
+        // Goal scores section
+        let gs = &self.result.goal_scores;
+        table.add_row(vec![
+            Cell::new("").add_attribute(Attribute::Dim),
+            Cell::new("--- Goal Scores ---").add_attribute(Attribute::Dim),
+        ]);
+        let goal_pairs: [(&str, u32); 5] = [
+            ("Replies", gs.replies),
+            ("Quotes", gs.quotes),
+            ("Shares", gs.shares),
+            ("Follows", gs.follows),
+            ("Impressions", gs.impressions),
+        ];
+        for (label, val) in &goal_pairs {
+            let color = if *val >= 40 {
+                Color::Green
+            } else if *val >= 20 {
+                Color::Yellow
+            } else {
+                Color::DarkGrey
+            };
+            table.add_row(vec![
+                Cell::new(label),
+                Cell::new(format!("{}/100", val)).fg(color),
+            ]);
+        }
 
         // Issues section
         if !self.result.issues.is_empty() {
@@ -111,7 +175,11 @@ pub async fn execute(
     text: &str,
     goal: Option<&str>,
 ) -> Result<(), XmasterError> {
-    let result = preflight::analyze(text, goal);
+    let ctx = AnalyzeContext {
+        goal: goal.map(|g| g.to_string()),
+        ..Default::default()
+    };
+    let result = preflight::analyze(text, &ctx);
     let display = AnalyzeDisplay { result };
     output::render(format, &display, None);
     Ok(())

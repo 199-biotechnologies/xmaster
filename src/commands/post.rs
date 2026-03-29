@@ -1,7 +1,7 @@
 use crate::cli::parse_tweet_id;
 use crate::context::AppContext;
 use crate::errors::XmasterError;
-use crate::intel::preflight;
+use crate::intel::preflight::{self, AnalyzeContext, MediaKind, PostMode};
 use crate::intel::store::IntelStore;
 use crate::output::{self, OutputFormat, Tableable};
 use crate::providers::xapi::XApi;
@@ -52,9 +52,38 @@ pub async fn execute(
 ) -> Result<(), XmasterError> {
     let api = XApi::new(ctx.clone());
 
-    // ── Pre-flight analysis (skip for replies — scoring is tuned for standalone posts) ──
+    // ── Pre-flight analysis ──
     let is_reply = reply_to.is_some();
-    let analysis = preflight::analyze(text, None);
+    let is_quote = quote.is_some();
+    let mode = if is_reply {
+        PostMode::Reply
+    } else if is_quote {
+        PostMode::Quote
+    } else {
+        PostMode::Standalone
+    };
+    let media_kind = if !media.is_empty() {
+        let first = media[0].to_lowercase();
+        if first.ends_with(".mp4") || first.ends_with(".mov") || first.ends_with(".webm") {
+            Some(MediaKind::Video)
+        } else if first.ends_with(".gif") {
+            Some(MediaKind::Gif)
+        } else {
+            Some(MediaKind::Image)
+        }
+    } else {
+        None
+    };
+    let analyze_ctx = AnalyzeContext {
+        goal: None,
+        mode: Some(mode),
+        has_media: !media.is_empty(),
+        media_kind,
+        has_poll: poll.is_some(),
+        target_text: None,
+        author_voice: None,
+    };
+    let analysis = preflight::analyze(text, &analyze_ctx);
     let mut warnings = Vec::new();
 
     if !is_reply {
@@ -166,18 +195,21 @@ pub async fn execute(
     };
 
     if let Ok(store) = IntelStore::open() {
-        let _ = store.log_post(
+        let analysis_json_str = serde_json::to_string(&analysis).ok();
+        let _ = store.record_published_post(
             &result.id,
             text,
             content_type,
             reply_id.as_deref(),
             quote_id.as_deref(),
             Some(analysis.score as f64),
+            analysis_json_str.as_deref(),
+            None,
         );
 
-        // Log reply for reciprocity tracking
+        // Log reply for reciprocity tracking with style classification
         if let Some(ref target_id) = reply_id {
-            // Fetch target tweet to get author info
+            let style = IntelStore::classify_reply_style(text);
             if let Ok(target_tweet) = api.get_tweet(target_id).await {
                 let _ = store.log_reply(
                     target_id,
@@ -185,6 +217,7 @@ pub async fn execute(
                     target_tweet.author_username.as_deref(),
                     target_tweet.author_followers.map(|f| f as i64),
                     &result.id,
+                    Some(&style),
                 );
             }
         }

@@ -1,6 +1,6 @@
 use crate::context::AppContext;
 use crate::errors::XmasterError;
-use crate::intel::preflight;
+use crate::intel::preflight::{self, AnalyzeContext};
 use crate::intel::store::IntelStore;
 use crate::output::{self, CsvRenderable, OutputFormat, Tableable};
 use crate::providers::xapi::XApi;
@@ -82,7 +82,11 @@ pub async fn execute(
     let api = XApi::new(ctx.clone());
 
     // ── Pre-flight on the hook (first tweet) ──
-    let analysis = preflight::analyze(&texts[0], Some("impressions"));
+    let thread_ctx = AnalyzeContext {
+        goal: Some("impressions".to_string()),
+        ..Default::default()
+    };
+    let analysis = preflight::analyze(&texts[0], &thread_ctx);
     let mut warnings = Vec::new();
 
     for issue in &analysis.issues {
@@ -142,16 +146,23 @@ pub async fn execute(
             .await
         {
             Ok(resp) => {
-                // Log each tweet to store
+                // Log each tweet to store via record_published_post
                 if let Ok(store) = IntelStore::open() {
                     let content_type = if i == 0 { "thread_hook" } else { "thread_reply" };
-                    let _ = store.log_post(
+                    let analysis_json = if i == 0 {
+                        serde_json::to_string(&analysis).ok()
+                    } else {
+                        None
+                    };
+                    let _ = store.record_published_post(
                         &resp.id,
                         text,
                         content_type,
                         reply_to,
                         None,
                         if i == 0 { Some(analysis.score as f64) } else { None },
+                        analysis_json.as_deref(),
+                        None,
                     );
                 }
                 posted_ids.push(resp.id);

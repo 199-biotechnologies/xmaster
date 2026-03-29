@@ -14,11 +14,39 @@ struct AgentInfo {
     /// Algorithm intelligence — agents read this to understand how to optimise.
     /// Source: xai-org/x-algorithm open-source code (January 2026).
     algorithm: AlgorithmInfo,
+    /// Which signals xmaster can measure, which it can only proxy, and which are blind.
+    measurement_coverage: MeasurementCoverage,
     /// Hints for optimal usage — the CLI tells agents how to use it well.
     usage_hints: Vec<String>,
+    /// Workflow handoff hints — tells agents what command to run after each action.
+    handoffs: Vec<Handoff>,
     /// User's writing style for X posts (only present when configured).
     #[serde(skip_serializing_if = "Option::is_none")]
     writing_style: Option<String>,
+}
+
+#[derive(Serialize)]
+struct MeasurementCoverage {
+    /// Signals that X API returns directly — xmaster can track these.
+    measurable: Vec<String>,
+    /// Signals that X API doesn't expose — xmaster uses heuristic proxies.
+    proxy_only: Vec<ProxySignal>,
+    /// Signals with no API or proxy — completely invisible to xmaster.
+    blind: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ProxySignal {
+    signal: String,
+    proxy_method: String,
+    confidence: String,
+}
+
+#[derive(Serialize)]
+struct Handoff {
+    after_command: String,
+    next_commands: Vec<String>,
+    reason: String,
 }
 
 #[derive(Serialize)]
@@ -53,6 +81,22 @@ impl Tableable for AgentInfo {
         table.add_row(vec!["Signals", "19 total (15 positive, 4 negative) — weights unpublished"]);
         table.add_row(vec!["Best Times", &self.algorithm.best_posting_hours]);
         table.add_row(vec!["Best Days", &self.algorithm.best_posting_days]);
+        table.add_row(vec![
+            "Measurable Signals",
+            &self.measurement_coverage.measurable.join(", "),
+        ]);
+        table.add_row(vec![
+            "Proxy Signals",
+            &self.measurement_coverage.proxy_only
+                .iter()
+                .map(|p| format!("{} ({})", p.signal, p.confidence))
+                .collect::<Vec<_>>()
+                .join(", "),
+        ]);
+        table.add_row(vec![
+            "Blind Signals",
+            &format!("{} signals (no API/proxy)", self.measurement_coverage.blind.len()),
+        ]);
         table.add_row(vec!["Hint", &self.usage_hints.first().cloned().unwrap_or_default()]);
         if let Some(ref style) = self.writing_style {
             table.add_row(vec!["Writing Style", style]);
@@ -155,6 +199,24 @@ pub fn execute(format: OutputFormat) {
             best_posting_hours: "9-11 AM local time (empirical)".into(),
             best_posting_days: "Tuesday, Wednesday, Thursday (empirical)".into(),
         },
+        measurement_coverage: MeasurementCoverage {
+            measurable: vec![
+                "favorite".into(), "retweet".into(), "reply".into(),
+                "quote".into(), "impressions".into(), "bookmarks".into(),
+            ],
+            proxy_only: vec![
+                ProxySignal { signal: "profile_click".into(), proxy_method: "curiosity/hook heuristics".into(), confidence: "medium".into() },
+                ProxySignal { signal: "follow_author".into(), proxy_method: "profile_click proxy".into(), confidence: "low".into() },
+                ProxySignal { signal: "share_via_dm".into(), proxy_method: "save-worthy content heuristics".into(), confidence: "medium".into() },
+                ProxySignal { signal: "dwell".into(), proxy_method: "word count + line breaks".into(), confidence: "high".into() },
+            ],
+            blind: vec![
+                "report".into(), "block_author".into(), "mute_author".into(),
+                "not_interested".into(), "photo_expand".into(), "vqv".into(),
+                "click".into(), "share_via_copy_link".into(), "quoted_click".into(),
+                "good_click".into(), "cont_dwell_time".into(),
+            ],
+        },
         usage_hints: vec![
             "Always run 'xmaster analyze' before posting — it checks for common issues that hurt reach".into(),
             "Use 'xmaster search-ai' over 'xmaster search' — cheaper and smarter (xAI vs X API)".into(),
@@ -165,6 +227,33 @@ pub fn execute(format: OutputFormat) {
             "Use 'xmaster timeline --sort impressions' to find your best-performing posts".into(),
             "Use 'xmaster timeline --since 24h' to check recent post performance".into(),
             "Use 'xmaster engage recommend --topic \"your niche\"' to find high-ROI reply targets".into(),
+        ],
+        handoffs: vec![
+            Handoff {
+                after_command: "post".into(),
+                next_commands: vec!["xmaster metrics <id>".into(), "xmaster track run".into()],
+                reason: "Track engagement on your new post to learn what works".into(),
+            },
+            Handoff {
+                after_command: "analyze".into(),
+                next_commands: vec!["xmaster post \"...\"".into(), "xmaster schedule add \"...\" --at auto".into()],
+                reason: "Post the optimized content or schedule it for the best time".into(),
+            },
+            Handoff {
+                after_command: "schedule add".into(),
+                next_commands: vec!["xmaster schedule list".into()],
+                reason: "Confirm the post is queued at the right time".into(),
+            },
+            Handoff {
+                after_command: "engage recommend".into(),
+                next_commands: vec!["xmaster reply <id> \"...\"".into(), "xmaster like <id>".into()],
+                reason: "Act on the recommended engagement targets".into(),
+            },
+            Handoff {
+                after_command: "engage feed".into(),
+                next_commands: vec!["xmaster reply <id> \"...\"".into(), "xmaster like <id>".into()],
+                reason: "Engage with the curated feed items to build reciprocity".into(),
+            },
         ],
         writing_style: style,
     };

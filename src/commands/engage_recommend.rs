@@ -19,6 +19,27 @@ pub struct RecommendCandidate {
     pub reply_rate: f64,
     pub score: f64,
     pub source: String,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reasons: Vec<String>,
+}
+
+/// Adaptive follower band based on user's own follower count.
+/// Targets accounts 2x-20x your size for optimal reply ROI.
+pub fn default_target_band(my_followers: u64) -> (u64, u64) {
+    let min = (my_followers * 2).clamp(500, 5_000);
+    let max = (my_followers * 20).clamp(5_000, 100_000);
+    (min, max)
+}
+
+fn compute_size_fit(target_followers: u64, my_followers: u64) -> f64 {
+    let (min, max) = default_target_band(my_followers);
+    if target_followers >= min && target_followers <= max {
+        1.0
+    } else if target_followers < min {
+        (target_followers as f64 / min as f64).max(0.2)
+    } else {
+        (max as f64 / target_followers as f64).max(0.1)
+    }
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -169,28 +190,42 @@ pub async fn recommend(
         ));
     }
 
-    // Phase 2: Score
+    // Phase 2: Score with opportunity model
+    // Try to get user's follower count for adaptive sizing
+    let my_followers = {
+        let api = crate::providers::xapi::XApi::new(ctx.clone());
+        api.get_me().await.ok().and_then(|u| u.public_metrics.as_ref().map(|m| m.followers_count)).unwrap_or(100) as u64
+    };
+
     let mut scored: Vec<RecommendCandidate> = filtered
         .into_iter()
         .map(|c| {
-            let reciprocity = c.reply_rate; // 0-1
+            let reciprocity = c.reply_rate;
             let reach = if c.followers > 0 {
                 ((c.followers as f64).log2() / 20.0).min(1.0)
             } else {
                 0.0
             };
-            let freshness = 1.0; // all candidates are from live/recent data
+            let size_fit = compute_size_fit(c.followers, my_followers);
             let relevance = c.relevance;
 
-            let score = 0.4 * reciprocity + 0.3 * reach + 0.2 * freshness + 0.1 * relevance;
+            // Opportunity scoring: reply_roi proxy + size_fit + reciprocity + reach + relevance
+            let score = 0.25 * reciprocity + 0.25 * size_fit + 0.20 * reach + 0.20 * relevance + 0.10 * 1.0;
+
+            let mut reasons = Vec::new();
+            if reciprocity > 0.3 { reasons.push(format!("replied back {:.0}% of the time", reciprocity * 100.0)); }
+            if size_fit > 0.8 { reasons.push("in your ideal follower band".into()); }
+            if reach > 0.6 { reasons.push("large audience amplifies your reply".into()); }
+            if relevance > 0.5 { reasons.push("topically relevant".into()); }
 
             RecommendCandidate {
-                rank: 0, // assigned after sort
+                rank: 0,
                 username: c.username,
                 followers: c.followers,
                 reply_rate: c.reply_rate,
                 score,
                 source: c.source,
+                reasons,
             }
         })
         .collect();
@@ -327,7 +362,11 @@ pub struct FeedPost {
     pub likes: u64,
     pub replies: u64,
     pub reply_command: String,
+    #[serde(skip_serializing_if = "is_zero_f32")]
+    pub opportunity_score: f32,
 }
+
+fn is_zero_f32(v: &f32) -> bool { *v == 0.0 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct FeedResult {
@@ -459,11 +498,22 @@ pub async fn feed(
             age_minutes,
             likes: metrics.map(|m| m.like_count).unwrap_or(0),
             replies: metrics.map(|m| m.reply_count).unwrap_or(0),
+            opportunity_score: 0.0, // computed after collection
         });
     }
 
-    // Sort by freshest first (lowest age)
-    posts.sort_by_key(|p| p.age_minutes);
+    // Score by opportunity: freshness + size_fit + conversation openness
+    let my_followers = {
+        let api2 = crate::providers::xapi::XApi::new(ctx.clone());
+        api2.get_me().await.ok().and_then(|u| u.public_metrics.as_ref().map(|m| m.followers_count)).unwrap_or(100) as u64
+    };
+    for p in &mut posts {
+        let freshness = 1.0 - (p.age_minutes as f64 / max_age_mins as f64).min(1.0);
+        let size_fit = compute_size_fit(p.author_followers, my_followers);
+        let openness = if p.likes > 0 { (p.replies as f64 / p.likes as f64).min(1.0) } else { 0.5 };
+        p.opportunity_score = (0.30 * freshness + 0.30 * size_fit + 0.25 * openness + 0.15) as f32;
+    }
+    posts.sort_by(|a, b| b.opportunity_score.partial_cmp(&a.opportunity_score).unwrap_or(std::cmp::Ordering::Equal));
     posts.truncate(count);
 
     // Auto-add high-value accounts from search to watchlist (silent, never fails)

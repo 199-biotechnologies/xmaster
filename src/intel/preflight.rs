@@ -13,6 +13,85 @@ use serde::Serialize;
 /// Negative signals: report (~-369x), block (~-74x), mute (~-40x), not_interested (~-20x)
 pub const ALGORITHM_SOURCE: &str = "xai-org/x-algorithm (January 2026, Grok-based)";
 
+// ---------------------------------------------------------------------------
+// Context passed into analyze()
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub enum PostMode {
+    Standalone,
+    Reply,
+    Quote,
+}
+
+impl Default for PostMode {
+    fn default() -> Self {
+        Self::Standalone
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub enum MediaKind {
+    Image,
+    Video,
+    Gif,
+}
+
+#[derive(Debug, Clone, Serialize, Default)]
+pub struct AnalyzeContext {
+    pub goal: Option<String>,
+    pub mode: Option<PostMode>,
+    pub has_media: bool,
+    pub media_kind: Option<MediaKind>,
+    pub has_poll: bool,
+    pub target_text: Option<String>,
+    pub author_voice: Option<String>,
+}
+
+impl AnalyzeContext {
+    pub fn goal_str(&self) -> Option<&str> {
+        self.goal.as_deref()
+    }
+
+    pub fn is_reply(&self) -> bool {
+        matches!(self.mode, Some(PostMode::Reply))
+    }
+
+    pub fn is_quote(&self) -> bool {
+        matches!(self.mode, Some(PostMode::Quote))
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Proxy signal scores
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct ProxyScores {
+    pub reply: f32,
+    pub quote: f32,
+    pub profile_click: f32,
+    pub follow_author: f32,
+    pub share_via_dm: f32,
+    pub share_via_copy_link: f32,
+    pub dwell: f32,
+    pub media_expand: f32,
+    pub negative_risk: f32,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct GoalScores {
+    pub replies: u32,
+    pub quotes: u32,
+    pub shares: u32,
+    pub follows: u32,
+    pub impressions: u32,
+}
+
+// ---------------------------------------------------------------------------
+// PreflightResult
+// ---------------------------------------------------------------------------
+
 #[derive(Debug, Clone, Serialize)]
 pub struct PreflightResult {
     pub text: String,
@@ -22,6 +101,8 @@ pub struct PreflightResult {
     pub suggestions: Vec<String>,
     pub features: FeatureVector,
     pub suggested_next_commands: Vec<String>,
+    pub proxy_scores: ProxyScores,
+    pub goal_scores: GoalScores,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -64,16 +145,23 @@ pub struct FeatureVector {
     pub line_count: usize,
     pub starts_with_i: bool,
     pub content_type_guess: String,
-    /// Estimated dwell time in seconds (based on ~200 words/min reading speed)
     pub est_dwell_seconds: f64,
-    /// Sentiment: positive, neutral, or negative (simple heuristic)
     pub sentiment: String,
 }
 
-/// Core pre-flight analysis. Evaluates tweet text and returns a scored result.
-pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
+// ---------------------------------------------------------------------------
+// Core analysis
+// ---------------------------------------------------------------------------
+
+pub fn analyze(text: &str, ctx: &AnalyzeContext) -> PreflightResult {
     let trimmed = text.trim();
-    let features = extract_features(trimmed);
+    let mut features = extract_features(trimmed);
+    let goal = ctx.goal_str();
+
+    if ctx.has_media {
+        features.has_media = true;
+    }
+
     let mut issues = Vec::new();
     let mut score: i32 = 70;
 
@@ -88,8 +176,6 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
         score -= 30;
     }
 
-    // X Premium allows up to 25,000 characters. Standard accounts: 280.
-    // We warn at 280 (standard visibility) but only mark critical at 25,000.
     if features.char_count > 25_000 {
         issues.push(Issue {
             severity: Severity::Critical,
@@ -114,7 +200,6 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
             ),
             fix: None,
         });
-        // No score penalty — long posts are fine for Premium users
     }
 
     if features.has_link && features.link_position.as_deref() == Some("body") {
@@ -179,11 +264,11 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
     }
 
     if features.char_count < 30 && !features.has_media && !features.has_question {
-        // Very short posts with no media or question lack dwell time signal
         issues.push(Issue {
             severity: Severity::Info,
             code: "too_short".into(),
-            message: "Very short post — longer content drives more dwell time (a scoring signal)".into(),
+            message: "Very short post — longer content drives more dwell time (a scoring signal)"
+                .into(),
             fix: Some("Consider adding depth — the algorithm rewards dwell time".into()),
         });
         score -= 5;
@@ -235,10 +320,9 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
         score += 10;
     }
     if features.has_question {
-        // Questions always help (~20x weight in algorithm, estimated)
         score += 5;
         if goal == Some("replies") {
-            score += 10; // Extra boost when replies is the explicit goal
+            score += 10;
         }
     }
     if features.char_count > 0 && features.char_count < 200 {
@@ -251,13 +335,11 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
         score += 10;
     }
 
-    // --- Dwell time estimation ---
     if features.est_dwell_seconds >= 10.0 {
-        // Long-form content drives dwell_time signal (~8x) and cont_dwell_time
         score += 5;
     }
 
-    // --- Sentiment check (2026 algorithm: Grok predicts P(block), P(mute)) ---
+    // --- Sentiment check ---
     if features.sentiment == "negative" {
         issues.push(Issue {
             severity: Severity::Warning,
@@ -271,7 +353,9 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
             severity: Severity::Info,
             code: "mixed_sentiment".into(),
             message: "Mildly negative language detected — may elevate P(mute) prediction".into(),
-            fix: Some("Consider softening — the algorithm penalises predicted negative reactions".into()),
+            fix: Some(
+                "Consider softening — the algorithm penalises predicted negative reactions".into(),
+            ),
         });
         score -= 5;
     }
@@ -286,7 +370,9 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
     }
     .to_string();
 
-    let suggestions = suggest_improvements(&issues, &features, goal);
+    let proxy_scores = estimate_proxies(trimmed, &features, ctx);
+    let goal_scores = score_goals(&proxy_scores);
+    let suggestions = suggest_improvements(&issues, &features, &proxy_scores, goal);
     let suggested_next_commands = build_next_commands(trimmed, score);
 
     let display_text = if trimmed.chars().count() > 200 {
@@ -303,8 +389,286 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
         suggestions,
         features,
         suggested_next_commands,
+        proxy_scores,
+        goal_scores,
     }
 }
+
+// ---------------------------------------------------------------------------
+// Proxy signal estimation
+// ---------------------------------------------------------------------------
+
+fn estimate_proxies(text: &str, features: &FeatureVector, ctx: &AnalyzeContext) -> ProxyScores {
+    let lower = text.to_lowercase();
+
+    let p_reply = {
+        let mut s: f32 = 0.15;
+        if features.has_question {
+            s += 0.30;
+        }
+        let open_ended = ["what", "how", "why", "which", "where", "who"];
+        if open_ended
+            .iter()
+            .any(|w| lower.starts_with(w) || lower.contains(&format!(" {w} ")))
+        {
+            s += 0.10;
+        }
+        let debate = [
+            "unpopular opinion",
+            "hot take",
+            "controversial",
+            "change my mind",
+            "am i wrong",
+            "disagree",
+            "debate",
+        ];
+        if debate.iter().any(|d| lower.contains(d)) {
+            s += 0.15;
+        }
+        if features.has_numbers || has_proper_nouns(text) {
+            s += 0.05;
+        }
+        if ctx.is_reply() {
+            s += 0.10;
+        }
+        s.min(1.0)
+    };
+
+    let p_quote = {
+        let mut s: f32 = 0.08;
+        if features.content_type_guess == "data" {
+            s += 0.20;
+        }
+        let contrarian = [
+            "actually",
+            "most people",
+            "nobody talks about",
+            "the truth is",
+            "unpopular",
+        ];
+        if contrarian.iter().any(|c| lower.contains(c)) {
+            s += 0.15;
+        }
+        if lower.contains("1.") || lower.contains("1)") || lower.contains("step 1") {
+            s += 0.10;
+        }
+        if features.word_count <= 30 && features.hook_strength >= 60 {
+            s += 0.10;
+        }
+        if ctx.is_quote() {
+            s += 0.10;
+        }
+        s.min(1.0)
+    };
+
+    let p_profile_click = {
+        let mut s: f32 = 0.10;
+        let curiosity = [
+            "i spent",
+            "after years of",
+            "i've been",
+            "here's what i learned",
+            "lessons from",
+        ];
+        if curiosity.iter().any(|c| lower.contains(c)) {
+            s += 0.20;
+        }
+        let authority = [
+            "ceo", "founder", "built", "shipped", "years", "clients", "revenue", "raised",
+        ];
+        if authority.iter().any(|a| lower.contains(a)) {
+            s += 0.10;
+        }
+        if ctx.author_voice.is_some() {
+            s += 0.05;
+        }
+        if features.hook_strength >= 70 {
+            s += 0.10;
+        }
+        s.min(1.0)
+    };
+
+    let p_follow = {
+        let mut s: f32 = 0.05;
+        if features.content_type_guess == "how-to" || features.content_type_guess == "data" {
+            s += 0.15;
+        }
+        if lower.contains("thread") || lower.contains("1.") {
+            s += 0.10;
+        }
+        if features.has_numbers && has_proper_nouns(text) {
+            s += 0.10;
+        }
+        s += p_profile_click * 0.2;
+        s.min(1.0)
+    };
+
+    let p_dm_share = {
+        let mut s: f32 = 0.05;
+        let practical = [
+            "how to",
+            "step by step",
+            "guide",
+            "tutorial",
+            "template",
+            "checklist",
+            "framework",
+            "playbook",
+            "here's how",
+            "hack",
+            "trick",
+            "tip",
+        ];
+        if practical.iter().any(|p| lower.contains(p)) {
+            s += 0.25;
+        }
+        let insider = [
+            "nobody talks about",
+            "most people don't know",
+            "insider",
+            "behind the scenes",
+            "secret",
+            "hidden",
+            "underrated",
+        ];
+        if insider.iter().any(|i| lower.contains(i)) {
+            s += 0.20;
+        }
+        if features.content_type_guess == "data" {
+            s += 0.15;
+        }
+        s.min(1.0)
+    };
+
+    let p_link_share = {
+        let mut s: f32 = 0.05;
+        if features.word_count <= 25 && features.hook_strength >= 60 {
+            s += 0.15;
+        }
+        if features.has_numbers && features.content_type_guess == "data" {
+            s += 0.15;
+        }
+        if features.content_type_guess == "announcement" {
+            s += 0.15;
+        }
+        s.min(1.0)
+    };
+
+    let p_dwell = {
+        let mut s: f32 = (features.est_dwell_seconds as f32 / 30.0).min(0.6);
+        if features.line_count > 2 {
+            s += 0.10;
+        }
+        if features.has_media {
+            s += 0.15;
+        }
+        if ctx.has_poll {
+            s += 0.10;
+        }
+        s.min(1.0)
+    };
+
+    let p_media_expand = if features.has_media {
+        let mut s: f32 = 0.40;
+        match ctx.media_kind {
+            Some(MediaKind::Video) => s += 0.25,
+            Some(MediaKind::Gif) => s += 0.15,
+            Some(MediaKind::Image) => s += 0.10,
+            None => {}
+        }
+        s.min(1.0)
+    } else {
+        0.0
+    };
+
+    let p_negative = {
+        let mut s: f32 = 0.0;
+        if features.sentiment == "negative" {
+            s += 0.40;
+        } else if features.sentiment == "mixed" {
+            s += 0.15;
+        }
+        let bait = ["like if", "rt if", "follow for"];
+        if bait.iter().any(|b| lower.contains(b)) {
+            s += 0.20;
+        }
+        let attacks = ["you're wrong", "shut up", "stfu", "cope", "ratio", "l + ratio"];
+        if attacks.iter().any(|a| lower.contains(a)) {
+            s += 0.25;
+        }
+        s.min(1.0)
+    };
+
+    ProxyScores {
+        reply: p_reply,
+        quote: p_quote,
+        profile_click: p_profile_click,
+        follow_author: p_follow,
+        share_via_dm: p_dm_share,
+        share_via_copy_link: p_link_share,
+        dwell: p_dwell,
+        media_expand: p_media_expand,
+        negative_risk: p_negative,
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Goal scoring
+// ---------------------------------------------------------------------------
+
+fn score_goals(proxies: &ProxyScores) -> GoalScores {
+    let neg_penalty = 1.0 - (proxies.negative_risk * 0.6);
+
+    let replies = ((proxies.reply * 0.65
+        + proxies.dwell * 0.15
+        + proxies.profile_click * 0.10
+        + proxies.quote * 0.10)
+        * neg_penalty
+        * 100.0) as u32;
+
+    let quotes = ((proxies.quote * 0.55
+        + proxies.share_via_copy_link * 0.20
+        + proxies.profile_click * 0.15
+        + proxies.reply * 0.10)
+        * neg_penalty
+        * 100.0) as u32;
+
+    let shares = ((proxies.share_via_dm * 0.45
+        + proxies.share_via_copy_link * 0.35
+        + proxies.dwell * 0.10
+        + proxies.follow_author * 0.10)
+        * neg_penalty
+        * 100.0) as u32;
+
+    let follows = ((proxies.follow_author * 0.50
+        + proxies.profile_click * 0.25
+        + proxies.share_via_dm * 0.15
+        + proxies.dwell * 0.10)
+        * neg_penalty
+        * 100.0) as u32;
+
+    let impressions = ((proxies.dwell * 0.25
+        + proxies.reply * 0.20
+        + proxies.share_via_dm * 0.15
+        + proxies.share_via_copy_link * 0.10
+        + proxies.quote * 0.10
+        + proxies.media_expand * 0.10
+        + proxies.follow_author * 0.10)
+        * neg_penalty
+        * 100.0) as u32;
+
+    GoalScores {
+        replies: replies.min(100),
+        quotes: quotes.min(100),
+        shares: shares.min(100),
+        follows: follows.min(100),
+        impressions: impressions.min(100),
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Feature extraction
+// ---------------------------------------------------------------------------
 
 fn extract_features(text: &str) -> FeatureVector {
     let char_count = text.chars().count();
@@ -320,8 +684,17 @@ fn extract_features(text: &str) -> FeatureVector {
     let starts_with_i = text.starts_with("I ") || text.starts_with("I'");
 
     let cta_patterns = [
-        "check out", "click", "sign up", "subscribe", "join", "try it",
-        "grab it", "get it", "learn more", "read more", "download",
+        "check out",
+        "click",
+        "sign up",
+        "subscribe",
+        "join",
+        "try it",
+        "grab it",
+        "get it",
+        "learn more",
+        "read more",
+        "download",
     ];
     let lower = text.to_lowercase();
     let has_cta = cta_patterns.iter().any(|p| lower.contains(p));
@@ -329,22 +702,52 @@ fn extract_features(text: &str) -> FeatureVector {
     let hook_strength = score_hook(text.lines().next().unwrap_or(""));
     let content_type_guess = detect_content_type(text);
 
-    // Dwell time: ~200 words per minute reading speed + 1s base scan time
     let est_dwell_seconds = 1.0 + (word_count as f64 / 200.0) * 60.0;
 
-    // Simple sentiment analysis for combative/negative tone
     let negative_words = [
-        "stupid", "idiot", "dumb", "hate", "terrible", "awful", "disgusting",
-        "pathetic", "garbage", "trash", "worst", "moron", "clown", "fraud",
-        "scam", "sucks", "useless", "incompetent", "liar", "bs", "stfu",
-        "shut up", "you're wrong", "cope", "ratio",
+        "stupid",
+        "idiot",
+        "dumb",
+        "hate",
+        "terrible",
+        "awful",
+        "disgusting",
+        "pathetic",
+        "garbage",
+        "trash",
+        "worst",
+        "moron",
+        "clown",
+        "fraud",
+        "scam",
+        "sucks",
+        "useless",
+        "incompetent",
+        "liar",
+        "bs",
+        "stfu",
+        "shut up",
+        "you're wrong",
+        "cope",
+        "ratio",
     ];
     let aggressive_patterns = [
-        "imagine thinking", "tell me you", "nobody asked", "stay mad",
-        "cry about it", "skill issue", "l + ratio",
+        "imagine thinking",
+        "tell me you",
+        "nobody asked",
+        "stay mad",
+        "cry about it",
+        "skill issue",
+        "l + ratio",
     ];
-    let neg_count = negative_words.iter().filter(|w| lower.contains(*w)).count();
-    let aggro_count = aggressive_patterns.iter().filter(|p| lower.contains(*p)).count();
+    let neg_count = negative_words
+        .iter()
+        .filter(|w| lower.contains(*w))
+        .count();
+    let aggro_count = aggressive_patterns
+        .iter()
+        .filter(|p| lower.contains(*p))
+        .count();
 
     let sentiment = if neg_count >= 2 || aggro_count >= 1 {
         "negative".to_string()
@@ -359,7 +762,7 @@ fn extract_features(text: &str) -> FeatureVector {
         word_count,
         has_link,
         link_position,
-        has_media: false, // caller can override if media is attached
+        has_media: false,
         hashtag_count,
         has_question,
         has_numbers,
@@ -379,26 +782,23 @@ fn score_hook(first_line: &str) -> u32 {
         return 0;
     }
 
-    let mut score: u32 = 40; // baseline
+    let mut score: u32 = 40;
 
-    // Starts with a number — strong hook
     if trimmed.chars().next().is_some_and(|c| c.is_ascii_digit()) {
         score += 30;
     }
-
-    // Starts with a question
     if trimmed.ends_with('?') {
         score += 20;
     }
 
-    // Bold/contrarian signals
-    let bold_words = ["never", "always", "stop", "wrong", "truth", "secret", "nobody", "everyone"];
+    let bold_words = [
+        "never", "always", "stop", "wrong", "truth", "secret", "nobody", "everyone",
+    ];
     let lower = trimmed.to_lowercase();
     if bold_words.iter().any(|w| lower.contains(w)) {
         score += 15;
     }
 
-    // Weak openers penalize
     let weak = ["I ", "So ", "Just ", "The ", "It's ", "This is "];
     if weak.iter().any(|w| trimmed.starts_with(w)) {
         score = score.saturating_sub(20);
@@ -425,8 +825,14 @@ fn detect_content_type(text: &str) -> String {
     }
 
     let announcement_signals = [
-        "announcing", "launching", "introducing", "excited to", "just shipped",
-        "now available", "new:", "release",
+        "announcing",
+        "launching",
+        "introducing",
+        "excited to",
+        "just shipped",
+        "now available",
+        "new:",
+        "release",
     ];
     if announcement_signals.iter().any(|s| lower.contains(s)) {
         return "announcement".into();
@@ -436,14 +842,12 @@ fn detect_content_type(text: &str) -> String {
 }
 
 fn has_proper_nouns(text: &str) -> bool {
-    // Simple heuristic: look for capitalized words that aren't at sentence start
     let words: Vec<&str> = text.split_whitespace().collect();
     for (i, word) in words.iter().enumerate() {
         if i == 0 {
             continue;
         }
         let prev = words[i - 1];
-        // Skip words after sentence-ending punctuation
         if prev.ends_with('.') || prev.ends_with('!') || prev.ends_with('?') {
             continue;
         }
@@ -458,7 +862,12 @@ fn has_proper_nouns(text: &str) -> bool {
     false
 }
 
-fn suggest_improvements(issues: &[Issue], features: &FeatureVector, goal: Option<&str>) -> Vec<String> {
+fn suggest_improvements(
+    issues: &[Issue],
+    features: &FeatureVector,
+    proxies: &ProxyScores,
+    goal: Option<&str>,
+) -> Vec<String> {
     let mut suggestions = Vec::new();
 
     for issue in issues {
@@ -467,25 +876,62 @@ fn suggest_improvements(issues: &[Issue], features: &FeatureVector, goal: Option
         }
     }
 
-    // Goal-specific suggestions
     match goal {
         Some("replies") => {
             if !features.has_question {
-                suggestions.push("Add a question — questions are the #1 driver of replies (~20x weight)".into());
+                suggestions.push(
+                    "Add a question — questions are the #1 driver of replies (~20x weight)".into(),
+                );
+            }
+            if proxies.reply < 0.30 {
+                suggestions.push(
+                    "Try an open-ended question (what/how/why) to boost reply probability".into(),
+                );
             }
         }
         Some("impressions") => {
             if features.hook_strength < 70 {
-                suggestions.push("Strengthen your hook — first line determines if people stop scrolling".into());
+                suggestions.push(
+                    "Strengthen your hook — first line determines if people stop scrolling".into(),
+                );
             }
             if features.line_count <= 1 && features.char_count > 80 {
-                suggestions.push("Add line breaks — visual spacing increases dwell time (a scoring signal)".into());
+                suggestions.push(
+                    "Add line breaks — visual spacing increases dwell time (a scoring signal)"
+                        .into(),
+                );
+            }
+            if proxies.dwell < 0.20 {
+                suggestions
+                    .push("Add more depth — longer dwell time increases distribution".into());
+            }
+        }
+        Some("shares") => {
+            if proxies.share_via_dm < 0.15 {
+                suggestions.push(
+                    "Add practical value (how-to, data, framework) — it drives DM shares (~25x weight)".into(),
+                );
+            }
+        }
+        Some("follows") => {
+            if proxies.profile_click < 0.20 {
+                suggestions.push(
+                    "Add a curiosity gap or credentials — profile clicks are the gateway to follows"
+                        .into(),
+                );
+            }
+        }
+        Some("quotes") => {
+            if proxies.quote < 0.15 {
+                suggestions.push(
+                    "Make it quotable — contrarian takes, data points, or short punchy claims"
+                        .into(),
+                );
             }
         }
         _ => {}
     }
 
-    // Algorithm-smart growth advice (always included)
     if features.est_dwell_seconds < 5.0 && features.char_count > 0 {
         suggestions.push(format!(
             "Est. dwell time: {:.0}s — longer posts drive more dwell_time signal. Consider adding depth.",
@@ -494,12 +940,20 @@ fn suggest_improvements(issues: &[Issue], features: &FeatureVector, goal: Option
     }
 
     if features.content_type_guess == "opinion" && !features.has_numbers {
-        suggestions.push("Data-backed opinions outperform pure takes — add a number or citation".into());
+        suggestions
+            .push("Data-backed opinions outperform pure takes — add a number or citation".into());
     }
 
-    // DM-share potential hint
     if features.content_type_guess == "data" || features.content_type_guess == "how-to" {
-        suggestions.push("This looks DM-shareable — insider data and how-tos drive share_via_dm (~25x signal)".into());
+        suggestions.push(
+            "This looks DM-shareable — insider data and how-tos drive share_via_dm (~25x signal)"
+                .into(),
+        );
+    }
+
+    if proxies.negative_risk >= 0.30 {
+        suggestions
+            .push("High negative-reaction risk — Grok will suppress this. Soften the tone.".into());
     }
 
     suggestions.dedup();
@@ -511,66 +965,91 @@ fn build_next_commands(text: &str, score: u32) -> Vec<String> {
     if score >= 75 {
         vec![format!("xmaster post \"{}\"", escaped)]
     } else {
-        vec![format!("xmaster analyze \"<your revised text>\" --goal replies")]
+        vec!["xmaster analyze \"<your revised text>\" --goal replies".to_string()]
     }
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn default_ctx() -> AnalyzeContext {
+        AnalyzeContext::default()
+    }
+
+    fn ctx_with_goal(goal: &str) -> AnalyzeContext {
+        AnalyzeContext {
+            goal: Some(goal.to_string()),
+            ..Default::default()
+        }
+    }
+
     #[test]
     fn empty_tweet_is_critical() {
-        let result = analyze("", None);
+        let result = analyze("", &default_ctx());
         assert!(result.score < 50);
         assert_eq!(result.issues[0].code, "empty_content");
     }
 
     #[test]
     fn link_in_body_detected() {
-        let result = analyze("Check this out https://example.com", None);
+        let result = analyze("Check this out https://example.com", &default_ctx());
         assert!(result.issues.iter().any(|i| i.code == "link_in_body"));
     }
 
     #[test]
     fn over_280_is_info_long_post() {
         let long = "a".repeat(300);
-        let result = analyze(&long, None);
+        let result = analyze(&long, &default_ctx());
         assert!(result.issues.iter().any(|i| i.code == "long_post"));
     }
 
     #[test]
     fn over_25000_is_critical() {
         let long = "a".repeat(25_001);
-        let result = analyze(&long, None);
+        let result = analyze(&long, &default_ctx());
         assert!(result.issues.iter().any(|i| i.code == "over_limit"));
     }
 
     #[test]
     fn clean_tweet_scores_well() {
-        let result = analyze("7 things I learned building a startup in 2024:\n\n1. Speed beats perfection\n2. Talk to users daily\n3. Ship or die", None);
+        let result = analyze(
+            "7 things I learned building a startup in 2024:\n\n1. Speed beats perfection\n2. Talk to users daily\n3. Ship or die",
+            &default_ctx(),
+        );
         assert!(result.score >= 60, "score was {}", result.score);
-        // Content classifier may vary — just check it's a reasonable type
         assert!(!result.features.content_type_guess.is_empty());
     }
 
     #[test]
     fn question_detected() {
-        let result = analyze("What's the hardest lesson you learned this year?", Some("replies"));
+        let result = analyze(
+            "What's the hardest lesson you learned this year?",
+            &ctx_with_goal("replies"),
+        );
         assert!(result.features.has_question);
-        // Short questions score lower due to low_specificity — but question is detected
         assert!(result.score >= 50, "score was {}", result.score);
     }
 
     #[test]
     fn weak_hook_flagged() {
-        let result = analyze("I think this is an interesting take on the market", None);
+        let result = analyze(
+            "I think this is an interesting take on the market",
+            &default_ctx(),
+        );
         assert!(result.issues.iter().any(|i| i.code == "weak_hook"));
     }
 
     #[test]
     fn grade_mapping() {
-        let result = analyze("Stop sleeping on Rust.\n\n3 reasons it will dominate backend in 2025:", None);
+        let result = analyze(
+            "Stop sleeping on Rust.\n\n3 reasons it will dominate backend in 2025:",
+            &default_ctx(),
+        );
         assert!(
             ["A", "B", "C"].contains(&result.grade.as_str()),
             "grade was {}",
@@ -580,35 +1059,54 @@ mod tests {
 
     #[test]
     fn link_in_body_is_critical() {
-        let result = analyze("Great article https://example.com about Rust", None);
-        let issue = result.issues.iter().find(|i| i.code == "link_in_body").unwrap();
+        let result = analyze(
+            "Great article https://example.com about Rust",
+            &default_ctx(),
+        );
+        let issue = result
+            .issues
+            .iter()
+            .find(|i| i.code == "link_in_body")
+            .unwrap();
         assert_eq!(issue.severity, Severity::Critical);
     }
 
     #[test]
     fn engagement_bait_detected() {
-        let result = analyze("Like if you agree with this take on AI", None);
+        let result = analyze(
+            "Like if you agree with this take on AI",
+            &default_ctx(),
+        );
         assert!(result.issues.iter().any(|i| i.code == "engagement_bait"));
     }
 
     #[test]
     fn starts_with_mention_flagged() {
-        let result = analyze("@elonmusk what do you think about this?", None);
-        assert!(result.issues.iter().any(|i| i.code == "starts_with_mention"));
+        let result = analyze(
+            "@elonmusk what do you think about this?",
+            &default_ctx(),
+        );
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.code == "starts_with_mention"));
     }
 
     #[test]
     fn at_281_is_long_post_info() {
         let long = "x".repeat(281);
-        let result = analyze(&long, None);
-        let issue = result.issues.iter().find(|i| i.code == "long_post").unwrap();
+        let result = analyze(&long, &default_ctx());
+        let issue = result
+            .issues
+            .iter()
+            .find(|i| i.code == "long_post")
+            .unwrap();
         assert_eq!(issue.severity, Severity::Info);
     }
 
     #[test]
     fn short_question_not_penalized_as_too_short() {
-        // Short questions drive replies (~20x estimated weight) — should NOT get "too_short" warning
-        let result = analyze("What's your biggest regret?", None);
+        let result = analyze("What's your biggest regret?", &default_ctx());
         assert!(result.features.has_question);
         assert!(
             !result.issues.iter().any(|i| i.code == "too_short"),
@@ -618,8 +1116,14 @@ mod tests {
 
     #[test]
     fn specific_numbers_boost_score() {
-        let with_numbers = analyze("3 things I learned building startups in 2024", None);
-        let without_numbers = analyze("Things I learned building startups recently", None);
+        let with_numbers = analyze(
+            "3 things I learned building startups in 2024",
+            &default_ctx(),
+        );
+        let without_numbers = analyze(
+            "Things I learned building startups recently",
+            &default_ctx(),
+        );
         assert!(
             with_numbers.score > without_numbers.score,
             "with_numbers={} should beat without_numbers={}",
@@ -630,10 +1134,13 @@ mod tests {
 
     #[test]
     fn perfect_tweet_scores_high() {
-        // Numbers + question + line breaks + under 200 chars + proper noun
         let text = "3 things Google taught me about scaling:\n\n1. Cache everything\n2. Fail fast\n\nWhat would you add?";
-        let result = analyze(text, None);
-        assert!(result.score >= 75, "perfect tweet score was {}", result.score);
+        let result = analyze(text, &default_ctx());
+        assert!(
+            result.score >= 75,
+            "perfect tweet score was {}",
+            result.score
+        );
         assert!(
             result.grade == "A" || result.grade == "B",
             "grade was {}",
@@ -643,20 +1150,149 @@ mod tests {
 
     #[test]
     fn empty_text_is_critical() {
-        let result = analyze("   ", None);
-        let issue = result.issues.iter().find(|i| i.code == "empty_content").unwrap();
+        let result = analyze("   ", &default_ctx());
+        let issue = result
+            .issues
+            .iter()
+            .find(|i| i.code == "empty_content")
+            .unwrap();
         assert_eq!(issue.severity, Severity::Critical);
     }
 
     #[test]
     fn rt_if_detected_as_engagement_bait() {
-        let result = analyze("RT if you think Rust is the future of systems programming", None);
+        let result = analyze(
+            "RT if you think Rust is the future of systems programming",
+            &default_ctx(),
+        );
         assert!(result.issues.iter().any(|i| i.code == "engagement_bait"));
     }
 
     #[test]
     fn excessive_hashtags_warned() {
-        let result = analyze("Great day #rust #programming #code #dev", None);
-        assert!(result.issues.iter().any(|i| i.code == "excessive_hashtags"));
+        let result = analyze(
+            "Great day #rust #programming #code #dev",
+            &default_ctx(),
+        );
+        assert!(result
+            .issues
+            .iter()
+            .any(|i| i.code == "excessive_hashtags"));
+    }
+
+    // --- Proxy signal tests ---
+
+    #[test]
+    fn question_drives_reply_proxy() {
+        let q = analyze(
+            "What's the biggest mistake founders make?",
+            &default_ctx(),
+        );
+        let s = analyze(
+            "Founders make a lot of mistakes in their journey.",
+            &default_ctx(),
+        );
+        assert!(
+            q.proxy_scores.reply > s.proxy_scores.reply,
+            "question reply={:.2} should beat statement reply={:.2}",
+            q.proxy_scores.reply,
+            s.proxy_scores.reply
+        );
+    }
+
+    #[test]
+    fn data_content_drives_quote_proxy() {
+        let data = analyze(
+            "73% of startups fail because of premature scaling — research from 2024",
+            &default_ctx(),
+        );
+        let opinion = analyze(
+            "I think startups fail because of bad decisions",
+            &default_ctx(),
+        );
+        assert!(
+            data.proxy_scores.quote > opinion.proxy_scores.quote,
+            "data quote={:.2} should beat opinion quote={:.2}",
+            data.proxy_scores.quote,
+            opinion.proxy_scores.quote
+        );
+    }
+
+    #[test]
+    fn practical_content_drives_dm_share() {
+        let howto = analyze(
+            "How to build a CLI in Rust — step by step guide:",
+            &default_ctx(),
+        );
+        let opinion = analyze(
+            "Rust is a great language for building tools",
+            &default_ctx(),
+        );
+        assert!(
+            howto.proxy_scores.share_via_dm > opinion.proxy_scores.share_via_dm,
+            "howto dm_share={:.2} should beat opinion dm_share={:.2}",
+            howto.proxy_scores.share_via_dm,
+            opinion.proxy_scores.share_via_dm
+        );
+    }
+
+    #[test]
+    fn negative_tone_raises_negative_risk() {
+        let neg = analyze(
+            "This is stupid garbage and you're an idiot if you believe it",
+            &default_ctx(),
+        );
+        let pos = analyze(
+            "Here's a thoughtful take on why this approach works better",
+            &default_ctx(),
+        );
+        assert!(
+            neg.proxy_scores.negative_risk > pos.proxy_scores.negative_risk,
+            "negative risk={:.2} should beat positive risk={:.2}",
+            neg.proxy_scores.negative_risk,
+            pos.proxy_scores.negative_risk
+        );
+    }
+
+    #[test]
+    fn media_context_drives_media_expand() {
+        let with_media = analyze(
+            "Check this out",
+            &AnalyzeContext {
+                has_media: true,
+                media_kind: Some(MediaKind::Image),
+                ..Default::default()
+            },
+        );
+        let without_media = analyze("Check this out", &default_ctx());
+        assert!(
+            with_media.proxy_scores.media_expand > without_media.proxy_scores.media_expand,
+            "media expand={:.2} should beat no-media={:.2}",
+            with_media.proxy_scores.media_expand,
+            without_media.proxy_scores.media_expand
+        );
+    }
+
+    #[test]
+    fn goal_scores_populated() {
+        let result = analyze(
+            "3 things Google taught me about scaling:\n\n1. Cache everything\n2. Fail fast\n\nWhat would you add?",
+            &default_ctx(),
+        );
+        assert!(result.goal_scores.replies > 0);
+        assert!(result.goal_scores.impressions > 0);
+    }
+
+    #[test]
+    fn goal_scores_capped_at_100() {
+        let result = analyze(
+            "What's the #1 thing nobody talks about in startups? Here's how to build a $1M ARR company step by step — the secret framework:",
+            &default_ctx(),
+        );
+        assert!(result.goal_scores.replies <= 100);
+        assert!(result.goal_scores.quotes <= 100);
+        assert!(result.goal_scores.shares <= 100);
+        assert!(result.goal_scores.follows <= 100);
+        assert!(result.goal_scores.impressions <= 100);
     }
 }

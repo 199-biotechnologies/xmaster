@@ -8,7 +8,8 @@ use std::sync::Arc;
 use crate::config::config_dir;
 use crate::context::AppContext;
 use crate::errors::XmasterError;
-use crate::intel::preflight;
+use crate::intel::preflight::{self, AnalyzeContext};
+use crate::intel::store::IntelStore;
 use crate::providers::xapi::XApi;
 
 // ---------------------------------------------------------------------------
@@ -121,7 +122,7 @@ impl PostScheduler {
         let id = generate_id(now);
 
         // Run preflight analysis
-        let pf = preflight::analyze(content, None);
+        let pf = preflight::analyze(content, &AnalyzeContext::default());
         let score = pf.score as i32;
 
         let media_json = media.map(|m| serde_json::to_string(m).unwrap_or_default());
@@ -410,6 +411,22 @@ impl PostScheduler {
                             params![fire_ts, tweet.id, id],
                         )
                         .map_err(|e| XmasterError::Config(e.to_string()))?;
+
+                    // Record to intel store
+                    if let Ok(store) = IntelStore::open() {
+                        let pf = preflight::analyze(content, &AnalyzeContext::default());
+                        let analysis_json = serde_json::to_string(&pf).ok();
+                        let _ = store.record_published_post(
+                            &tweet.id,
+                            content,
+                            "scheduled",
+                            reply_to.as_deref(),
+                            quote.as_deref(),
+                            Some(pf.score as f64),
+                            analysis_json.as_deref(),
+                            Some(id),
+                        );
+                    }
 
                     result.fired += 1;
                     result.posts.push(FiredPost {
