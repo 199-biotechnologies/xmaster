@@ -181,7 +181,7 @@ The scoring formula uses exactly 19 signals. The weight constants are hidden, bu
 
 *Likes are the weakest positive signal.* Most growth advice focuses on likes. The algorithm barely values them. A like is the lowest-effort action a user can take, and its weight reflects that.
 
-*Shares are probably the most underrated signals.* DM shares, copy-link shares, and generic shares are three separate dedicated signals---new in 2026. Sending a post via DM is the highest-conviction action a user can take (personally vouching to someone they know). The algorithm treats it accordingly #inf-tag.
+*Shares are probably the most underrated signals.* DM shares, copy-link shares, and generic shares are three separate dedicated signals---new in 2026. The `share_via_dm` signal fires when *other users* send your post via DM to someone---it is the highest-conviction sharing action (personally vouching). Create content people want to privately share: insider data, useful tools, niche insights #inf-tag.
 
 *Follows-from-post are the ultimate signal.* If your content causes someone to follow you, that post receives the highest positive weighting. This rewards genuinely novel or valuable content from accounts people have not seen before #inf-tag.
 
@@ -285,7 +285,7 @@ if thrift_user_actions.is_empty() {
 - Reply to every response you receive within 30 minutes.
 
 *Evening (10 min):*
-- DM 1--2 posts to people who would genuinely value them. This fires the `share_via_dm` signal---separate, high-value, and almost universally ignored by growth practitioners #code-tag.
+- Create content people want to privately share. The `share_via_dm` signal fires when *others* DM-share *your* post---not when you DM someone else's. Insider data, useful tools, niche insights drive this #code-tag.
 - Follow 5--10 relevant accounts. Your following list determines what Thunder serves as in-network candidates, shaping your own engagement history #code-tag.
 
 #set par(first-line-indent: 1.2em)
@@ -426,7 +426,7 @@ Positive scores scale linearly. Negative scores are compressed into a bounded ba
   #text(weight: "bold")[Midday (20 min)]
   - Post 1--2 original posts (spaced $gt.eq$ 2 hours from each other)
   - Reply to all replies on your content within 30 minutes
-  - DM 1 great post to someone who would value it
+  - Create content worth DM-sharing (the signal fires when others share YOUR post)
 
   #v(6pt)
   #text(weight: "bold")[Evening (10 min)]

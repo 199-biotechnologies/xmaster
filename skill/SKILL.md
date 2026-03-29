@@ -158,7 +158,7 @@ Source: `xai-org/x-algorithm` (January 2026). The 2026 system is a complete rewr
 
 Top positive signals (estimated, like = 1x baseline):
 - Follow from post: **~30x** (new in 2026, highest positive signal)
-- Share via DM: **~25x** (new in 2026, separate dedicated signal)
+- Share via DM: **~25x** (fires when OTHERS DM-share your post, not when you DM others)
 - Reply: **~20x** (still high, but "reply_engaged_by_author" is GONE)
 - Share via copy link: **~20x** (new in 2026, off-platform sharing)
 - Quote tweet: **~18x** (new dedicated signal)
@@ -181,7 +181,7 @@ Negative signals (estimated):
 
 **Timing**: Weekdays 9-11 AM local. Tue/Wed/Thu best. Space posts 2+ hours apart (AuthorDiversityScorer applies exponential decay).
 
-**Growth for small accounts**: 70% replying to mid-tier accounts (1K-50K), 30% original content. DM valuable posts to people. Build engagement history (128-position buffer) before expecting reach.
+**Growth for small accounts**: 70% replying to mid-tier accounts (1K-50K), 30% original content. Create content people want to privately share (DM share signal fires when others share YOUR post). Build engagement history (128-position buffer) before expecting reach.
 
 Run `xmaster agent-info --json` to get the full signal list programmatically.
 

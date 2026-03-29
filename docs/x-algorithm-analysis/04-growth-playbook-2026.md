@@ -158,7 +158,7 @@ Your first post in a feed session gets full score. Your second gets `decay^1`, t
 
 #### Evening Block (10 min) -- Network
 
-6. **DM 1-2 people** a post you genuinely found valuable. DM shares are a separate, high-value signal (`share_via_dm_score`) distinct from general shares. [CODE: `ClientTweetClickSendViaDirectMessage` is weighted independently in `weighted_scorer.rs`, line 57]
+6. **Create DM-worthy content.** The `share_via_dm_score` signal (~25x) fires when OTHER users share YOUR post via DM — not when you DM someone else's post. Create insider knowledge, specific data, or useful tools that people want to privately send to a friend. [CODE: `ClientTweetClickSendViaDirectMessage` in `weighted_scorer.rs`, line 57]
 
 7. **Follow 5-10 relevant accounts**. Your following list determines what Thunder serves as in-network candidates, which shapes your own engagement history. [CODE: `thunder_source.rs` -- `following_user_ids` is the input to `GetInNetworkPostsRequest`]
 
@@ -444,7 +444,7 @@ The 2026 source code does not contain an explicit Premium boost multiplier -- Pr
 
 - [ ] 5-7 posts daily with media mix (text, images, threads, occasional video)
 - [ ] 1 thread per week minimum
-- [ ] Begin sharing valuable posts via DM to people who would care (builds `share_via_dm_score` signals) [CODE: `ClientTweetClickSendViaDirectMessage`]
+- [ ] Create content people want to privately share — insider data, tools, niche insights (triggers `share_via_dm_score` when others DM your post) [CODE: `ClientTweetClickSendViaDirectMessage`]
 - [ ] Identify and consistently engage with 15-20 accounts in your niche
 - [ ] First viral moment (1 post exceeding 10K impressions)
 

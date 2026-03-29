@@ -158,7 +158,7 @@ pub fn execute(format: OutputFormat) {
             "Always run 'xmaster analyze' before posting — it scores your tweet against the algorithm".into(),
             "Use 'xmaster search-ai' over 'xmaster search' — cheaper and smarter (xAI vs X API)".into(),
             "Reply to larger accounts in your niche — replies are ~20x a like in the 2026 algorithm".into(),
-            "DM valuable posts to people — share_via_dm is a separate high-value signal (~25x)".into(),
+            "Create content people want to DM to friends — share_via_dm fires when OTHERS share YOUR post (~25x)".into(),
             "Never put external links in the main tweet body — put them in the first reply".into(),
             "Space posts 2+ hours apart — AuthorDiversityScorer applies exponential decay".into(),
             "Use 'xmaster timeline --sort impressions' to find your best-performing posts".into(),

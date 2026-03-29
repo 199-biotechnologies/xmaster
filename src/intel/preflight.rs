@@ -71,6 +71,10 @@ pub struct FeatureVector {
     pub line_count: usize,
     pub starts_with_i: bool,
     pub content_type_guess: String,
+    /// Estimated dwell time in seconds (based on ~200 words/min reading speed)
+    pub est_dwell_seconds: f64,
+    /// Sentiment: positive, neutral, or negative (simple heuristic)
+    pub sentiment: String,
 }
 
 /// Core pre-flight analysis. Evaluates tweet text and returns a scored result.
@@ -181,15 +185,15 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
         score -= 15;
     }
 
-    if features.char_count < 50 && !features.has_media && !features.has_question {
-        // Short questions are fine — they drive replies (27x weight)
+    if features.char_count < 30 && !features.has_media && !features.has_question {
+        // Very short posts with no media or question lack dwell time signal
         issues.push(Issue {
-            severity: Severity::Warning,
+            severity: Severity::Info,
             code: "too_short".into(),
-            message: "Very short tweet without media — may underperform".into(),
-            fix: Some("Add more context or attach media".into()),
+            message: "Very short post — longer content drives more dwell time (a scoring signal)".into(),
+            fix: Some("Consider adding depth — the algorithm rewards dwell time".into()),
         });
-        score -= 15;
+        score -= 5;
     }
 
     if trimmed.starts_with('@') {
@@ -207,7 +211,7 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
         issues.push(Issue {
             severity: Severity::Info,
             code: "no_question".into(),
-            message: "No question mark — questions drive 27x more replies".into(),
+            message: "No question mark — questions drive replies (~20x weight)".into(),
             fix: Some("Consider ending with a question to invite discussion".into()),
         });
         score -= 5;
@@ -252,6 +256,31 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
     }
     if features.hook_strength >= 70 {
         score += 10;
+    }
+
+    // --- Dwell time estimation ---
+    if features.est_dwell_seconds >= 10.0 {
+        // Long-form content drives dwell_time signal (~8x) and cont_dwell_time
+        score += 5;
+    }
+
+    // --- Sentiment check (2026 algorithm: Grok predicts P(block), P(mute)) ---
+    if features.sentiment == "negative" {
+        issues.push(Issue {
+            severity: Severity::Warning,
+            code: "negative_sentiment".into(),
+            message: "Combative or negative tone — Grok predicts P(block) and P(mute) and suppresses pre-emptively".into(),
+            fix: Some("Reframe constructively — critique the idea, not the person".into()),
+        });
+        score -= 15;
+    } else if features.sentiment == "mixed" {
+        issues.push(Issue {
+            severity: Severity::Info,
+            code: "mixed_sentiment".into(),
+            message: "Mildly negative language detected — may elevate P(mute) prediction".into(),
+            fix: Some("Consider softening — the algorithm penalises predicted negative reactions".into()),
+        });
+        score -= 5;
     }
 
     let score = score.clamp(0, 100) as u32;
@@ -307,6 +336,31 @@ fn extract_features(text: &str) -> FeatureVector {
     let hook_strength = score_hook(text.lines().next().unwrap_or(""));
     let content_type_guess = detect_content_type(text);
 
+    // Dwell time: ~200 words per minute reading speed + 1s base scan time
+    let est_dwell_seconds = 1.0 + (word_count as f64 / 200.0) * 60.0;
+
+    // Simple sentiment analysis for combative/negative tone
+    let negative_words = [
+        "stupid", "idiot", "dumb", "hate", "terrible", "awful", "disgusting",
+        "pathetic", "garbage", "trash", "worst", "moron", "clown", "fraud",
+        "scam", "sucks", "useless", "incompetent", "liar", "bs", "stfu",
+        "shut up", "you're wrong", "cope", "ratio",
+    ];
+    let aggressive_patterns = [
+        "imagine thinking", "tell me you", "nobody asked", "stay mad",
+        "cry about it", "skill issue", "l + ratio",
+    ];
+    let neg_count = negative_words.iter().filter(|w| lower.contains(*w)).count();
+    let aggro_count = aggressive_patterns.iter().filter(|p| lower.contains(*p)).count();
+
+    let sentiment = if neg_count >= 2 || aggro_count >= 1 {
+        "negative".to_string()
+    } else if neg_count == 1 {
+        "mixed".to_string()
+    } else {
+        "neutral".to_string()
+    };
+
     FeatureVector {
         char_count,
         word_count,
@@ -321,6 +375,8 @@ fn extract_features(text: &str) -> FeatureVector {
         line_count,
         starts_with_i,
         content_type_guess,
+        est_dwell_seconds,
+        sentiment,
     }
 }
 
@@ -422,7 +478,7 @@ fn suggest_improvements(issues: &[Issue], features: &FeatureVector, goal: Option
     match goal {
         Some("replies") => {
             if !features.has_question {
-                suggestions.push("Add a question — questions are the #1 driver of replies".into());
+                suggestions.push("Add a question — questions are the #1 driver of replies (~20x weight)".into());
             }
         }
         Some("impressions") => {
@@ -430,15 +486,27 @@ fn suggest_improvements(issues: &[Issue], features: &FeatureVector, goal: Option
                 suggestions.push("Strengthen your hook — first line determines if people stop scrolling".into());
             }
             if features.line_count <= 1 && features.char_count > 80 {
-                suggestions.push("Add line breaks — visual spacing increases stop rate in the feed".into());
-            }
-        }
-        Some("bookmarks") => {
-            if features.content_type_guess != "how-to" && features.content_type_guess != "data" {
-                suggestions.push("How-to and data-driven content gets bookmarked most — consider restructuring".into());
+                suggestions.push("Add line breaks — visual spacing increases dwell time (a scoring signal)".into());
             }
         }
         _ => {}
+    }
+
+    // Algorithm-smart growth advice (always included)
+    if features.est_dwell_seconds < 5.0 && features.char_count > 0 {
+        suggestions.push(format!(
+            "Est. dwell time: {:.0}s — longer posts drive more dwell_time signal. Consider adding depth.",
+            features.est_dwell_seconds
+        ));
+    }
+
+    if features.content_type_guess == "opinion" && !features.has_numbers {
+        suggestions.push("Data-backed opinions outperform pure takes — add a number or citation".into());
+    }
+
+    // DM-share potential hint
+    if features.content_type_guess == "data" || features.content_type_guess == "how-to" {
+        suggestions.push("This looks DM-shareable — insider data and how-tos drive share_via_dm (~25x signal)".into());
     }
 
     suggestions.dedup();
