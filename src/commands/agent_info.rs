@@ -12,7 +12,7 @@ struct AgentInfo {
     env_prefix: String,
     config_path: String,
     /// Algorithm intelligence — agents read this to understand how to optimise.
-    /// Source: twitter/the-algorithm-ml open-source code.
+    /// Source: xai-org/x-algorithm open-source code (January 2026).
     algorithm: AlgorithmInfo,
     /// Hints for optimal usage — the CLI tells agents how to use it well.
     usage_hints: Vec<String>,
@@ -49,8 +49,8 @@ impl Tableable for AgentInfo {
         table.add_row(vec!["Commands", &format!("{} commands", self.commands.len())]);
         table.add_row(vec!["Capabilities", &self.capabilities.join(", ")]);
         table.add_row(vec!["Algorithm Source", &self.algorithm.source]);
-        table.add_row(vec!["Top Signal", "Reply + author reply (150x a like)"]);
-        table.add_row(vec!["Time Decay", "50% visibility loss every 6 hours"]);
+        table.add_row(vec!["Top Signal", "Follow from post (~30x), DM share (~25x), Reply (~20x)"]);
+        table.add_row(vec!["Signals", "19 total (15 positive, 4 negative) — weights unpublished"]);
         table.add_row(vec!["Best Times", &self.algorithm.best_posting_hours]);
         table.add_row(vec!["Best Days", &self.algorithm.best_posting_days]);
         table.add_row(vec!["Hint", &self.usage_hints.first().cloned().unwrap_or_default()]);
@@ -125,38 +125,46 @@ pub fn execute(format: OutputFormat) {
         env_prefix: "XMASTER_".into(),
         config_path: config::config_path().to_string_lossy().to_string(),
         algorithm: AlgorithmInfo {
-            source: "twitter/the-algorithm-ml (open-source, verified Apr 2023, updated Sep 2025)".into(),
+            source: "xai-org/x-algorithm (January 2026, Grok-based transformer). Exact weights unpublished — estimates below from code structure + empirical data.".into(),
             weights: vec![
-                SignalWeight { signal: "reply_author_engaged".into(), weight: 75.0, ratio_to_like: "150x".into() },
-                SignalWeight { signal: "reply".into(), weight: 13.5, ratio_to_like: "27x".into() },
-                SignalWeight { signal: "profile_click".into(), weight: 12.0, ratio_to_like: "24x".into() },
-                SignalWeight { signal: "good_click".into(), weight: 11.0, ratio_to_like: "22x".into() },
-                SignalWeight { signal: "retweet".into(), weight: 1.0, ratio_to_like: "2x".into() },
-                SignalWeight { signal: "like".into(), weight: 0.5, ratio_to_like: "1x (baseline)".into() },
-                SignalWeight { signal: "video_playback_50pct".into(), weight: 0.005, ratio_to_like: "~0".into() },
-                SignalWeight { signal: "negative_feedback".into(), weight: -74.0, ratio_to_like: "-148x".into() },
-                SignalWeight { signal: "report".into(), weight: -369.0, ratio_to_like: "-738x".into() },
+                SignalWeight { signal: "follow_author".into(), weight: 30.0, ratio_to_like: "~30x (estimated)".into() },
+                SignalWeight { signal: "share_via_dm".into(), weight: 25.0, ratio_to_like: "~25x (estimated)".into() },
+                SignalWeight { signal: "reply".into(), weight: 20.0, ratio_to_like: "~20x (estimated)".into() },
+                SignalWeight { signal: "share_via_copy_link".into(), weight: 20.0, ratio_to_like: "~20x (estimated)".into() },
+                SignalWeight { signal: "quote".into(), weight: 18.0, ratio_to_like: "~18x (estimated)".into() },
+                SignalWeight { signal: "profile_click".into(), weight: 12.0, ratio_to_like: "~12x (estimated)".into() },
+                SignalWeight { signal: "click".into(), weight: 10.0, ratio_to_like: "~10x (estimated)".into() },
+                SignalWeight { signal: "share".into(), weight: 10.0, ratio_to_like: "~10x (estimated)".into() },
+                SignalWeight { signal: "dwell".into(), weight: 8.0, ratio_to_like: "~8x (estimated)".into() },
+                SignalWeight { signal: "retweet".into(), weight: 3.0, ratio_to_like: "~3x (estimated)".into() },
+                SignalWeight { signal: "favorite".into(), weight: 1.0, ratio_to_like: "1x (baseline)".into() },
+                SignalWeight { signal: "not_interested".into(), weight: -20.0, ratio_to_like: "~-20x (estimated)".into() },
+                SignalWeight { signal: "mute_author".into(), weight: -40.0, ratio_to_like: "~-40x (estimated)".into() },
+                SignalWeight { signal: "block_author".into(), weight: -74.0, ratio_to_like: "~-74x (estimated)".into() },
+                SignalWeight { signal: "report".into(), weight: -369.0, ratio_to_like: "~-369x (estimated)".into() },
             ],
-            time_decay_halflife_minutes: 360,
-            out_of_network_reply_penalty: -10.0,
+            time_decay_halflife_minutes: 0, // Not published in 2026 code — removed from agent-info
+            out_of_network_reply_penalty: 0.0, // Replaced by OON_WEIGHT_FACTOR (multiplicative, value unpublished)
             media_hierarchy: vec![
-                "native_video".into(), "multiple_images".into(), "single_image".into(),
-                "gif".into(), "external_link (lowest)".into(),
+                "text (highest avg engagement)".into(),
+                "native_image (triggers photo_expand_score)".into(),
+                "native_video (requires MIN_VIDEO_DURATION_MS for vqv_score)".into(),
+                "thread (maximises continuous dwell_time)".into(),
             ],
-            best_posting_hours: "9-11 AM local time".into(),
-            best_posting_days: "Tuesday, Wednesday, Thursday".into(),
+            best_posting_hours: "9-11 AM local time (empirical)".into(),
+            best_posting_days: "Tuesday, Wednesday, Thursday (empirical)".into(),
         },
         usage_hints: vec![
             "Always run 'xmaster analyze' before posting — it scores your tweet against the algorithm".into(),
             "Use 'xmaster search-ai' over 'xmaster search' — cheaper and smarter (xAI vs X API)".into(),
-            "Reply to your own commenters — conversations are worth 150x a like".into(),
+            "Reply to larger accounts in your niche — replies are ~20x a like in the 2026 algorithm".into(),
+            "DM valuable posts to people — share_via_dm is a separate high-value signal (~25x)".into(),
             "Never put external links in the main tweet body — put them in the first reply".into(),
-            "Check 'xmaster suggest next-post' before posting — avoid cannibalizing your own reach".into(),
-            "Post threads for maximum growth — they get bookmarked and shared heavily".into(),
-            "Check 'xmaster report weekly' to learn what's working".into(),
-            "Use 'xmaster schedule add --at auto' to schedule posts at your historically best time".into(),
-            "Run 'xmaster bookmarks sync' regularly to archive bookmarks — local copies survive tweet deletion".into(),
-            "Use 'xmaster engage recommend --topic \"your niche\"' to find high-ROI reply targets — conversations are 150x a like".into(),
+            "Space posts 2+ hours apart — AuthorDiversityScorer applies exponential decay".into(),
+            "Use 'xmaster timeline --sort impressions' to find your best-performing posts".into(),
+            "Use 'xmaster timeline --since 24h' to check recent post performance".into(),
+            "Bookmarks are NOT a scoring signal in the 2026 algorithm — don't optimise for them".into(),
+            "Use 'xmaster engage recommend --topic \"your niche\"' to find high-ROI reply targets".into(),
         ],
         writing_style: style,
     };

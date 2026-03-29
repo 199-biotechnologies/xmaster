@@ -101,13 +101,13 @@ The key insight: sync archives bookmark content locally in SQLite. Even if the o
 
 ```
 # After any engagement action, xmaster prints an undo hint.
-# Log the engagement mentally — it builds the relationship graph.
 
 # For replying to someone's post:
-# The algorithm weights conversations at 150x a like.
-# So after replying, TELL the user: "If they reply back,
-# respond to keep the conversation going — that's 150x the
-# algorithmic value of a like."
+# The 2026 algorithm weights replies at ~20x a like.
+# DM shares are ~25x. Follow-from-post is ~30x.
+# After replying, TELL the user: "If they reply back,
+# keep the conversation going — replies are one of the
+# highest-value signals in the algorithm."
 
 # When user wants to grow or asks "who should I engage with":
 xmaster engage recommend --topic "your niche" --min-followers 1000 --json
@@ -144,38 +144,46 @@ Don't wait for the user to ask for reports. If you notice they've been posting r
 | `engagement_bait` | "Like if you agree", "RT if..." | Algorithm actively suppresses this |
 | `excessive_hashtags` | More than 2 hashtags | No longer helps discovery, looks spammy |
 | `low_specificity` | No numbers, no names, no data | Specific beats vague: "40% reduction" > "significant improvement" |
-| `no_question` | No question mark (when goal=replies) | Questions drive replies (27x a like) |
+| `no_question` | No question mark (when goal=replies) | Questions drive replies (~20x a like) |
 | `over_limit` | Over 280 characters | Won't post |
 | `starts_with_mention` | Starts with @username | Limits visibility to mutual followers only |
 
 When issues are found, don't just list them — fix them. Rewrite the tweet, show the user the before/after, and re-analyze to confirm improvement.
 
-## Algorithm Knowledge (Source-Code Verified)
+## Algorithm Knowledge (2026 Source Code)
 
-These weights are from the actual open-source code at `twitter/the-algorithm-ml` (Heavy Ranker, `projects/home/recap/README.md`). Not blog approximations.
+Source: `xai-org/x-algorithm` (January 2026). The 2026 system is a complete rewrite — Grok-based transformer with zero hand-engineered features. Exact weight constants are NOT published (in `params.rs`). Estimates below from code structure + empirical data.
 
-**Engagement weights** (real code, ratio to like):
-- Conversation (reply + author replies back): **75.0 weight → 150x** a like
-- Reply: **13.5 weight → 27x**
-- Profile click: **12.0 weight → 24x**
-- Good click: **11.0 weight → 22x**
-- Retweet: **1.0 weight → 2x** (blogs say 20-40x — wrong, code says 1.0)
-- Like: **0.5 weight → baseline**
-- Report against you: **-369.0 weight → -738x** (most destructive signal)
-- Negative feedback: **-74.0 weight → -148x**
-- Out-of-network reply penalty: **-10.0** (subtractive)
+**19 scoring signals** from `weighted_scorer.rs` (15 positive, 4 negative):
 
-**Time decay** (`ranking.thrift`): halflife = 360 minutes (6 hours), floor = 0.6. Posts lose 50% visibility every 6 hours, minimum 60% of original score.
+Top positive signals (estimated, like = 1x baseline):
+- Follow from post: **~30x** (new in 2026, highest positive signal)
+- Share via DM: **~25x** (new in 2026, separate dedicated signal)
+- Reply: **~20x** (still high, but "reply_engaged_by_author" is GONE)
+- Share via copy link: **~20x** (new in 2026, off-platform sharing)
+- Quote tweet: **~18x** (new dedicated signal)
+- Profile click: **~12x**
+- Click (conversation): **~10x**
+- Dwell (binary): **~8x**
+- Retweet: **~3x**
 
-**Media hierarchy** (hardcoded): Native video > Multiple images > Single image > GIF > External link
+Negative signals (estimated):
+- Report: **~-369x** (most destructive)
+- Block: **~-74x**
+- Mute: **~-40x**
+- Not interested: **~-20x**
 
-**Premium boost**: Defaults to 1.0 in open-source code (neutral). The parameter `tweetFromBlueVerifiedAccountBoost` exists but is configurable server-side — evidence from insider posts suggests 2-4x in practice, but the code shows no hardcoded advantage.
+**Key 2026 changes**: No TweepCred (no "3 tweets scored" limit), no SimClusters, no Real Graph. Bookmarks are NOT a signal. DM shares are a separate high-value signal. The Grok transformer predicts negative actions and penalises pre-emptively.
 
-**Timing**: Weekdays 9-11 AM local time. Tue/Wed/Thu best. Avoid Saturday.
+**Media**: Text posts have highest avg engagement (0.48% vs 0.41% for images/video). Images trigger `photo_expand_score`. Videos must exceed `MIN_VIDEO_DURATION_MS` for `vqv_score`.
 
-**Growth for small accounts (<5K)**: 80% replying to mid-tier accounts (5K-100K), 20% original content. Post to Communities.
+**Premium boost**: Not in the 2026 recommendation source code. Empirical data shows ~10x reach advantage (operates at a different layer).
 
-Run `xmaster agent-info --json` to get the full algorithm weights programmatically.
+**Timing**: Weekdays 9-11 AM local. Tue/Wed/Thu best. Space posts 2+ hours apart (AuthorDiversityScorer applies exponential decay).
+
+**Growth for small accounts**: 70% replying to mid-tier accounts (1K-50K), 30% original content. DM valuable posts to people. Build engagement history (128-position buffer) before expecting reach.
+
+Run `xmaster agent-info --json` to get the full signal list programmatically.
 
 ## Composing Great Tweets (Apply When Helping Write)
 
@@ -185,7 +193,7 @@ When helping the user write tweets:
 - Use specific data points: "reduced aging markers by 40%" not "showed improvement"
 - If sharing a link, put it in the FIRST REPLY, never the main tweet
 - 1-2 hashtags maximum
-- End with a question to drive replies (27x weight)
+- End with a question to drive replies (~20x weight)
 - For threads: each tweet must be standalone-valuable, not just a continuation
 
 ## Command Reference
@@ -213,7 +221,7 @@ xmaster block|unblock|mute|unmute <username>
 
 # Reading
 xmaster me | xmaster user <username> | xmaster metrics <id>
-xmaster timeline [--user USERNAME] | xmaster mentions
+xmaster timeline [--user USERNAME] [--since 12h] [--before 7d] [--sort impressions] | xmaster mentions
 xmaster bookmarks list [--unread] | xmaster bookmarks sync [-c 200]
 xmaster bookmarks search "query" | xmaster bookmarks export [-o FILE] [--unread]
 xmaster bookmarks digest [-d 7] | xmaster bookmarks stats

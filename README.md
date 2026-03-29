@@ -154,7 +154,7 @@ The `sync` command archives bookmark content locally in SQLite. Even if the orig
 |---------|-------------|---------|
 | `engage recommend` | Find high-ROI reply targets in your niche | `xmaster engage recommend --topic "longevity biotech" -c 10` |
 
-The algorithm weights conversations (reply + author replies back) at 150x a like. `engage recommend` finds accounts most likely to reply back, ranked by reciprocity, reach, and freshness. Combine with `--topic` to discover new accounts in your niche via AI search.
+The algorithm weights replies at ~20x a like and DM shares at ~25x (2026 source code). `engage recommend` finds accounts most likely to reply back, ranked by reciprocity, reach, and freshness. Combine with `--topic` to discover new accounts in your niche via AI search.
 
 ### Search
 

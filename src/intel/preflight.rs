@@ -1,29 +1,24 @@
 use serde::Serialize;
 
-/// Algorithm weights from the open-source X ranking code (twitter/the-algorithm-ml).
-/// Source: projects/home/recap/README.md — Heavy Ranker scoring weights.
-/// These are the REAL weights, not blog approximations.
+/// Algorithm intelligence from the open-source X ranking code.
+/// Source: xai-org/x-algorithm (January 2026) — Grok-based transformer.
 ///
-/// The scoring formula is: Final Score = Σ(weight_i × P(action_i))
+/// The 2026 algorithm uses 19 engagement signals (15 positive, 4 negative)
+/// combined via WeightedScorer. Exact weight constants are NOT published
+/// (in unpublished params.rs). Estimates below from code structure + empirical data.
 ///
-/// | Signal                      | Weight | Ratio to Like |
-/// |-----------------------------|--------|---------------|
-/// | Reply + author replies back | 75.0   | 150x          |
-/// | Reply                       | 13.5   | 27x           |
-/// | Good profile click          | 12.0   | 24x           |
-/// | Good click                  | 11.0   | 22x           |
-/// | Retweet                     | 1.0    | 2x            |
-/// | Like/Favorite               | 0.5    | 1x (baseline) |
-/// | Video playback 50%+         | 0.005  | ~0            |
-/// | Negative feedback           | -74.0  | -148x         |
-/// | Report                      | -369.0 | -738x         |
+/// Scoring formula: Final Score = Σ(weight_i × P(action_i))
+///   where P(action_i) comes from Grok transformer predictions.
 ///
-/// Time decay: halflife = 360 minutes (6 hours), base = 0.6
-/// Out-of-network reply penalty: -10.0 (subtractive)
+/// Top positive signals (estimated): follow_author (~30x), share_via_dm (~25x),
+///   reply (~20x), share_via_copy_link (~20x), quote (~18x), profile_click (~12x)
+/// Negative signals: report (~-369x), block (~-74x), mute (~-40x), not_interested (~-20x)
 ///
-/// Source: github.com/twitter/the-algorithm (ranking.thrift, recap/README.md)
-/// Note: Blue/Premium boost defaults to 1.0 in open-source code (configurable but neutral by default).
-pub const ALGORITHM_SOURCE: &str = "twitter/the-algorithm-ml (April 2023, updated Sep 2025)";
+/// Key 2026 changes: No TweepCred, no SimClusters, no reply_engaged_by_author (removed),
+///   bookmarks NOT a signal, DM shares are a new separate high-value signal.
+///
+/// Source: github.com/xai-org/x-algorithm (weighted_scorer.rs, phoenix_scorer.rs)
+pub const ALGORITHM_SOURCE: &str = "xai-org/x-algorithm (January 2026, Grok-based)";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PreflightResult {
