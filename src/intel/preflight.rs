@@ -136,7 +136,7 @@ pub fn analyze(text: &str, goal: Option<&str>) -> PreflightResult {
             code: "weak_hook".into(),
             message: format!(
                 "Weak opening — \"{}...\" doesn't grab attention",
-                &first_line[..first_line.len().min(30)]
+                crate::utils::safe_truncate(first_line, 30)
             ),
             fix: Some("Lead with a number, question, or bold claim".into()),
         });

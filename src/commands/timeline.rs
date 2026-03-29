@@ -51,8 +51,8 @@ impl Tableable for TweetList {
         let mut table = comfy_table::Table::new();
         table.set_header(vec!["ID", "Author", "Text", "Views", "Likes", "RTs", "Date"]);
         for t in &self.tweets {
-            let truncated = if t.text.len() > 80 {
-                format!("{}...", &t.text[..77])
+            let truncated = if t.text.chars().count() > 80 {
+                format!("{}...", crate::utils::safe_truncate(&t.text, 77))
             } else {
                 t.text.clone()
             };

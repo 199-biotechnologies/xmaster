@@ -435,7 +435,7 @@ impl IntelStore {
                     let impressions: i64 = row.get(3)?;
                     let bookmarks: i64 = row.get(4)?;
                     let engagement_rate = if impressions > 0 {
-                        (likes + retweets + replies + bookmarks) as f64 / impressions as f64
+                        (likes + retweets + replies) as f64 / impressions as f64
                     } else {
                         0.0
                     };
@@ -458,7 +458,7 @@ impl IntelStore {
             "SELECT p.day_of_week, p.hour_of_day,
                     AVG(ms.impressions)                                         AS avg_imp,
                     AVG(CASE WHEN ms.impressions > 0
-                         THEN (ms.likes + ms.retweets + ms.replies + ms.bookmarks) * 1.0
+                         THEN (ms.likes + ms.retweets + ms.replies + ms.quotes) * 1.0
                               / ms.impressions ELSE 0 END)                      AS avg_er,
                     COUNT(DISTINCT p.tweet_id)                                  AS cnt
              FROM posts p
@@ -491,7 +491,7 @@ impl IntelStore {
                 "SELECT p.day_of_week, p.hour_of_day,
                         AVG(ms.impressions) AS avg_imp,
                         AVG(CASE WHEN ms.impressions > 0
-                             THEN (ms.likes+ms.retweets+ms.replies+ms.bookmarks)*1.0
+                             THEN (ms.likes+ms.retweets+ms.replies+ms.quotes)*1.0
                                   / ms.impressions ELSE 0 END) AS avg_er,
                         COUNT(DISTINCT p.tweet_id) AS cnt
                  FROM posts p
@@ -507,7 +507,7 @@ impl IntelStore {
                 "SELECT p.day_of_week, p.hour_of_day,
                         AVG(ms.impressions) AS avg_imp,
                         AVG(CASE WHEN ms.impressions > 0
-                             THEN (ms.likes+ms.retweets+ms.replies+ms.bookmarks)*1.0
+                             THEN (ms.likes+ms.retweets+ms.replies+ms.quotes)*1.0
                                   / ms.impressions ELSE 0 END) AS avg_er,
                         COUNT(DISTINCT p.tweet_id) AS cnt
                  FROM posts p
@@ -607,7 +607,7 @@ impl IntelStore {
              SELECT p.day_of_week, p.hour_of_day, p.content_type,
                     AVG(ms.impressions),
                     AVG(CASE WHEN ms.impressions > 0
-                         THEN (ms.likes+ms.retweets+ms.replies+ms.bookmarks)*1.0
+                         THEN (ms.likes+ms.retweets+ms.replies+ms.quotes)*1.0
                               / ms.impressions ELSE 0 END),
                     COUNT(DISTINCT p.tweet_id),
                     ?1
@@ -624,7 +624,7 @@ impl IntelStore {
              SELECT p.day_of_week, p.hour_of_day, 'all',
                     AVG(ms.impressions),
                     AVG(CASE WHEN ms.impressions > 0
-                         THEN (ms.likes+ms.retweets+ms.replies+ms.bookmarks)*1.0
+                         THEN (ms.likes+ms.retweets+ms.replies+ms.quotes)*1.0
                               / ms.impressions ELSE 0 END),
                     COUNT(DISTINCT p.tweet_id),
                     ?1

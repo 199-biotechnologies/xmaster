@@ -200,7 +200,7 @@ async fn fetch_tweet_metrics(
     if first_status == 401 {
         return Err(XmasterError::AuthMissing {
             provider: "x",
-            message: format!("HTTP 401: {}", &first_body[..first_body.len().min(200)]),
+            message: format!("HTTP 401: {}", crate::utils::safe_truncate(&first_body, 200)),
         });
     }
     if first_status == 429 {

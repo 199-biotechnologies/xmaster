@@ -30,8 +30,8 @@ impl Tableable for BookmarkList {
         let mut table = comfy_table::Table::new();
         table.set_header(vec!["ID", "Author", "Text", "Likes", "Saved"]);
         for b in &self.bookmarks {
-            let truncated = if b.text.len() > 60 {
-                format!("{}...", &b.text[..57])
+            let truncated = if b.text.chars().count() > 60 {
+                format!("{}...", crate::utils::safe_truncate(&b.text, 57))
             } else {
                 b.text.clone()
             };
