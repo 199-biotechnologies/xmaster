@@ -379,6 +379,20 @@ pub enum EngageCommands {
         #[arg(long, short, default_value = "5")]
         count: usize,
     },
+    /// Find fresh posts from big accounts to reply to NOW
+    Feed {
+        /// Topic/niche to find posts in
+        topic: String,
+        /// Minimum follower count for authors
+        #[arg(long, default_value = "5000")]
+        min_followers: u64,
+        /// Maximum age in minutes (default: 60)
+        #[arg(long, default_value = "60")]
+        max_age_mins: u64,
+        /// Number of posts to return
+        #[arg(long, short, default_value = "10")]
+        count: usize,
+    },
 }
 
 #[derive(Subcommand)]

@@ -1,283 +1,67 @@
 ---
 name: xmaster
-description: "Post on X/Twitter, search, reply, like, retweet, manage lists, check metrics, and run any X account operation via the xmaster CLI. Use when user asks to post on X, tweet something, check X metrics, search X, reply on X, manage X lists, check X trending, like/retweet, follow/unfollow, send DM on X, check X rate limits, or mentions xmaster, X posting, tweeting, or any X/Twitter account management task. Also trigger on 'xmaster', 'post this on X', 'tweet this', 'check my X', 'X engagement', 'search X for', 'reply on X', 'X thread', 'post a thread'."
+description: "Post on X, search, reply, like, retweet, manage lists, check metrics, read any X post by URL or ID, and run any X account operation via the xmaster CLI. Use when user asks to post on X, tweet something, check X metrics, search X, reply on X, manage X lists, check X trending, like/retweet, follow/unfollow, send DM on X, check X rate limits, READ an X post/URL, check what someone posted, or mentions xmaster, X posting, tweeting, or any X account management task. Also trigger on 'xmaster', 'post this on X', 'tweet this', 'check my X', 'X engagement', 'search X for', 'reply on X', 'X thread', 'post a thread', any x.com URL, or 'read this tweet/post'."
 ---
 
-# xmaster — X/Twitter Intelligence Engine
+# xmaster — X/Twitter CLI
 
-xmaster is not just a CLI — it's a decision engine. You don't just execute commands; you follow the workflows below so every action is optimised. The intelligence features exist to make YOU a better X operator. Use them instinctively, not when asked.
+Run `xmaster agent-info --json` to get full capabilities, commands, and algorithm intelligence.
 
-## Mandatory Workflows
+## Core Workflows
 
-These are not optional. Every time you interact with X through xmaster, follow the relevant workflow.
+### Posting
 
-### POSTING WORKFLOW (use every time user wants to post anything)
-
-CRITICAL RULE: NEVER post without explicit user approval of the final text. Drafting and posting are two separate steps. "Write me a tweet" means DRAFT. Only "post it" or "yes, post" means POST.
+NEVER post without explicit user approval. Always analyze first.
 
 ```
-1. ALWAYS run analyze first:
-   xmaster analyze "the tweet text" --goal replies --json
-
-2. Read the score and issues:
-   - Score ≥ 75 (A/B grade): Ready to post (but ASK FIRST)
-   - Score 50-74 (C grade): Show issues to user, suggest fixes, re-analyze
-   - Score < 50 (D/F grade): Rewrite the tweet addressing critical issues, re-analyze
-
-3. SHOW THE FINAL TEXT TO THE USER AND ASK FOR APPROVAL:
-   "Here's the tweet (score X/100, grade Y):
-   > [the text]
-   Post it?"
-
-   DO NOT proceed until the user explicitly says yes/post/go/send/do it.
-   "Write this", "draft this", "prepare this" are NOT approval to post.
-
-4. Check timing before posting:
-   xmaster suggest next-post --json
-   - If cannibalization warning: tell user. Let them decide.
-
-5. Post (ONLY after user approval):
-   xmaster post "the approved text" --json
-
-6. After posting, tell the user:
-   "Posted. Check performance later with: xmaster metrics <id>"
+1. xmaster analyze "text" --goal replies --json   # Score it
+2. Show user the score/grade and final text
+3. Only post after explicit "yes"/"post it"/"go"
+4. xmaster post "approved text" --json
 ```
 
-Never skip step 1. Even if the user says "just post it" — run analyze silently, and only flag issues if the score is below 50. The user trusts you to be smart about this.
+### Finding Posts to Reply To
 
-### THREAD WORKFLOW (use when posting multi-tweet content)
-
-```
-1. Analyze the FIRST tweet (it's the hook — most critical):
-   xmaster analyze "first tweet text" --goal impressions --json
-
-2. Check each tweet is under 280 chars and standalone-valuable
-
-3. Post the thread:
-   xmaster thread "tweet 1" "tweet 2" "tweet 3" --json
-```
-
-Threads are the #1 growth driver on X. If a user wants to share something longer than 280 chars, proactively suggest a thread format. Split at natural idea boundaries, not mid-sentence.
-
-### SEARCH WORKFLOW (use when looking for content or people)
+Replies are ~20x a like in the 2026 algorithm. This is the #1 growth lever for small accounts.
 
 ```
-# Default to AI search (cheaper, smarter):
-xmaster search-ai "query" --json
+# Find fresh posts from big accounts in your niche:
+xmaster engage feed "longevity biotech" --min-followers 5000 --max-age-mins 60
 
-# Only use X API search when you need structured data (exact tweet IDs, metrics):
-xmaster search "query" --json
+# Or find accounts to build relationships with:
+xmaster engage recommend --topic "longevity" --min-followers 1000
+
+# Then search their recent posts:
+xmaster search "from:username" --since 24h
 ```
 
-Always prefer `search-ai` unless the user specifically needs tweet IDs or exact metadata.
-
-### SCHEDULING WORKFLOW (use when user wants to post later)
+### Checking Performance
 
 ```
-1. Schedule the post:
-   xmaster schedule add "text" --at "2026-03-24 09:00" --json
-   (or --at auto to pick best time from engagement history)
-
-2. Confirm with user: "Scheduled for [time]. Check with: xmaster schedule list"
-
-3. Remind: "Run 'xmaster schedule setup' to enable automatic posting via launchd"
+xmaster timeline --user USERNAME --sort impressions -c 50    # Top posts by reach
+xmaster timeline --user USERNAME --since 24h                 # Recent posts
+xmaster track followers                                       # New/lost followers
+xmaster track growth -d 30                                    # Follower history
+xmaster metrics <id>                                          # Single post deep dive
 ```
 
-If the user says "post this tomorrow" or "schedule this for later", use this workflow. `--at auto` is the smart default — it picks the best time based on historical engagement data.
+## Algorithm Intelligence (2026)
 
-### BOOKMARK WORKFLOW (use when user mentions bookmarks, saved posts, or reading later)
+The CLI embeds knowledge from `xai-org/x-algorithm` (January 2026). Key facts:
 
-```
-1. First time or periodic: xmaster bookmarks sync -c 200 --json (archive to local DB)
-2. To find something: xmaster bookmarks search "query" --json
-3. Weekly digest: xmaster bookmarks digest -d 7 --json
-4. Export for reading: xmaster bookmarks export --unread -o ~/bookmarks.md
-5. Stats: xmaster bookmarks stats --json
+- **19 scoring signals** (15 positive, 4 negative) — weights unpublished but estimated
+- Top signals: follow-from-post (~30x), reply (~20x), quote (~18x), profile click (~12x)
+- **Negative signals are predictive** — Grok suppresses content it predicts users would block/mute
+- **Bookmarks are NOT a signal** — ignore advice claiming otherwise
+- **share_via_dm fires when OTHERS share YOUR post** — create DM-worthy content, don't DM your own posts
+- **Author diversity decay** — space posts 2+ hours apart
+- **Engagement history drives everything** — dormant accounts need 2 weeks of active engagement before the algorithm works
 
-The key insight: sync archives bookmark content locally in SQLite. Even if the original tweet gets deleted, your local copy survives. Always sync regularly.
-```
+`xmaster analyze` checks sentiment (Grok suppresses combative tone), estimates dwell time, and flags algorithm-penalised patterns.
 
-### ENGAGEMENT WORKFLOW (like, retweet, reply, follow)
-
-```
-# After any engagement action, xmaster prints an undo hint.
-
-# For replying to someone's post:
-# The 2026 algorithm weights replies at ~20x a like.
-# DM shares are ~25x. Follow-from-post is ~30x.
-# After replying, TELL the user: "If they reply back,
-# keep the conversation going — replies are one of the
-# highest-value signals in the algorithm."
-
-# When user wants to grow or asks "who should I engage with":
-xmaster engage recommend --topic "your niche" --min-followers 1000 --json
-# Returns ranked targets with reciprocity scores, reach, and freshness.
-# Suggested workflow: recommend → pick targets → search their recent posts → reply.
-```
-
-### METRICS & PERFORMANCE WORKFLOW
-
-When the user asks "how's my X doing?" or "check my engagement" or anything about performance:
+## Config
 
 ```
-1. Run a quick report:
-   xmaster report daily --json
-   (or weekly for broader view)
-
-2. Check best posting times:
-   xmaster suggest best-time --json
-
-3. If they ask about a specific post:
-   xmaster metrics <tweet_id> --json
-```
-
-Don't wait for the user to ask for reports. If you notice they've been posting regularly, proactively suggest: "Want me to check how your posts performed this week?"
-
-## Pre-Flight Scoring (The Intelligence Layer)
-
-`xmaster analyze` is your quality gate. It catches problems the user won't think of:
-
-| Issue Code | What It Catches | Why It Matters |
-|-----------|----------------|---------------|
-| `link_in_body` | External link in tweet | Since March 2026, link posts get ~zero reach for non-Premium |
-| `weak_hook` | First line starts with "I ", "So ", "Just " | First line is everything — scroll-stopping or scroll-past |
-| `engagement_bait` | "Like if you agree", "RT if..." | Algorithm actively suppresses this |
-| `excessive_hashtags` | More than 2 hashtags | No longer helps discovery, looks spammy |
-| `low_specificity` | No numbers, no names, no data | Specific beats vague: "40% reduction" > "significant improvement" |
-| `no_question` | No question mark (when goal=replies) | Questions drive replies (~20x a like) |
-| `over_limit` | Over 280 characters | Won't post |
-| `starts_with_mention` | Starts with @username | Limits visibility to mutual followers only |
-
-When issues are found, don't just list them — fix them. Rewrite the tweet, show the user the before/after, and re-analyze to confirm improvement.
-
-## Algorithm Knowledge (2026 Source Code)
-
-Source: `xai-org/x-algorithm` (January 2026). The 2026 system is a complete rewrite — Grok-based transformer with zero hand-engineered features. Exact weight constants are NOT published (in `params.rs`). Estimates below from code structure + empirical data.
-
-**19 scoring signals** from `weighted_scorer.rs` (15 positive, 4 negative):
-
-Top positive signals (estimated, like = 1x baseline):
-- Follow from post: **~30x** (new in 2026, highest positive signal)
-- Share via DM: **~25x** (fires when OTHERS DM-share your post, not when you DM others)
-- Reply: **~20x** (still high, but "reply_engaged_by_author" is GONE)
-- Share via copy link: **~20x** (new in 2026, off-platform sharing)
-- Quote tweet: **~18x** (new dedicated signal)
-- Profile click: **~12x**
-- Click (conversation): **~10x**
-- Dwell (binary): **~8x**
-- Retweet: **~3x**
-
-Negative signals (estimated):
-- Report: **~-369x** (most destructive)
-- Block: **~-74x**
-- Mute: **~-40x**
-- Not interested: **~-20x**
-
-**Key 2026 changes**: No TweepCred (no "3 tweets scored" limit), no SimClusters, no Real Graph. Bookmarks are NOT a signal. DM shares are a separate high-value signal. The Grok transformer predicts negative actions and penalises pre-emptively.
-
-**Media**: Text posts have highest avg engagement (0.48% vs 0.41% for images/video). Images trigger `photo_expand_score`. Videos must exceed `MIN_VIDEO_DURATION_MS` for `vqv_score`.
-
-**Premium boost**: Not in the 2026 recommendation source code. Empirical data shows ~10x reach advantage (operates at a different layer).
-
-**Timing**: Weekdays 9-11 AM local. Tue/Wed/Thu best. Space posts 2+ hours apart (AuthorDiversityScorer applies exponential decay).
-
-**Growth for small accounts**: 70% replying to mid-tier accounts (1K-50K), 30% original content. Create content people want to privately share (DM share signal fires when others share YOUR post). Build engagement history (128-position buffer) before expecting reach.
-
-Run `xmaster agent-info --json` to get the full signal list programmatically.
-
-## Composing Great Tweets (Apply When Helping Write)
-
-When helping the user write tweets:
-- Lead with a hook — number, question, bold claim, or specific result
-- Keep under 280 chars (don't pad to fill space — concise wins)
-- Use specific data points: "reduced aging markers by 40%" not "showed improvement"
-- If sharing a link, put it in the FIRST REPLY, never the main tweet
-- 1-2 hashtags maximum
-- End with a question to drive replies (~20x weight)
-- For threads: each tweet must be standalone-valuable, not just a continuation
-
-## Command Reference
-
-```bash
-# Core actions
-xmaster post "text" [--reply-to ID] [--quote ID] [--media FILE...]
-xmaster thread "tweet1" "tweet2" "tweet3" [--media FILE...]
-xmaster delete <id>
-
-# Intelligence (use instinctively — see workflows above)
-xmaster analyze "text" [--goal replies|impressions|bookmarks]
-xmaster suggest next-post          # Cannibalization guard
-xmaster suggest best-time          # Historical timing heatmap
-xmaster report daily|weekly        # Performance digest
-xmaster track run                  # Snapshot recent post metrics
-xmaster track followers            # Track new/lost followers
-xmaster track growth -d 30         # Follower growth history
-
-# Engagement intelligence
-xmaster engage recommend --topic "niche" [--min-followers 1000] [-c 5]
-
-# Engagement
-xmaster like|unlike|retweet|unretweet|bookmark|unbookmark <id>
-xmaster follow|unfollow <username>
-xmaster block|unblock|mute|unmute <username>
-
-# Reading
-xmaster me | xmaster user <username> | xmaster metrics <id>
-xmaster timeline [--user USERNAME] [--since 12h] [--before 7d] [--sort impressions]
-xmaster mentions | xmaster followers|following <username>
-xmaster bookmarks list [--unread] | xmaster bookmarks sync [-c 200]
-xmaster bookmarks search "query" | xmaster bookmarks export [-o FILE] [--unread]
-xmaster bookmarks digest [-d 7] | xmaster bookmarks stats
-xmaster followers|following <username>
-
-# Search (prefer search-ai for cost)
-xmaster search-ai "query"         # xAI/Grok — recommended
-xmaster search "query"             # X API v2 — for structured data
-xmaster trending [--region REGION]
-
-# Lists
-xmaster lists create|delete|add|remove|timeline|mine
-
-# DMs
-xmaster dm send <username> "text" | xmaster dm inbox | xmaster dm thread <id>
-
-# Scheduling
-xmaster schedule add "text" --at "2026-03-24 09:00"  # Schedule a post
-xmaster schedule add "text" --at auto                 # Auto-pick best time
-xmaster schedule list [--status pending]              # List scheduled posts
-xmaster schedule cancel <sched_id>                    # Cancel scheduled post
-xmaster schedule reschedule <sched_id> --at "time"    # Change post time
-xmaster schedule fire                                 # Execute due posts (cron)
-xmaster schedule setup                                # Install launchd daemon
-
-# System
-xmaster config show|set|check|guide  # Config management
-xmaster config auth                   # OAuth 2.0 PKCE (opens browser, needed for bookmarks)
-xmaster rate-limits                   # API quota status
-xmaster agent-info                    # Machine-readable capabilities + algorithm weights
-xmaster reply <id> "text"             # Shorthand for post --reply-to
-xmaster metrics <id1> <id2> ...       # Batch metrics for multiple tweets
-xmaster mentions [--since-id ID]      # Check for new mentions only
-```
-
-## Output
-
-All commands support `--json` (auto-enabled when piped). JSON envelope:
-```json
-{"version":"1","status":"success","data":{...},"metadata":{}}
-```
-
-Exit codes: 0=success, 1=runtime, 2=config, 3=auth, 4=rate-limited.
-
-## Configuration
-
-Config: `~/.config/xmaster/config.toml`. Env prefix: `XMASTER__` (double underscore for nesting).
-
-```bash
-# Initial setup
-xmaster config guide                  # Step-by-step setup instructions
-xmaster config set keys.api_key "your-key"
-xmaster config set keys.xai "xai-your-key"
-xmaster config check                  # Verify all credentials
-xmaster config auth                   # OAuth 2.0 for bookmarks (one-time, opens browser)
+xmaster config set account.premium true    # Enable Premium-aware scoring
+xmaster config set style.voice "your style" # Writing voice for drafts
 ```

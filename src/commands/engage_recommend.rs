@@ -224,6 +224,135 @@ pub async fn recommend(
 // Helpers
 // ---------------------------------------------------------------------------
 
+// ---------------------------------------------------------------------------
+// engage feed — find fresh posts from big accounts to reply to NOW
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FeedPost {
+    pub id: String,
+    pub author: String,
+    pub author_followers: u64,
+    pub text: String,
+    pub age_minutes: i64,
+    pub likes: u64,
+    pub replies: u64,
+    pub reply_command: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct FeedResult {
+    pub topic: String,
+    pub posts: Vec<FeedPost>,
+    pub total_found: usize,
+    pub filtered_by_followers: usize,
+}
+
+impl Tableable for FeedResult {
+    fn to_table(&self) -> comfy_table::Table {
+        let mut table = comfy_table::Table::new();
+        table.set_header(vec!["Age", "Author", "Followers", "Text", "Likes", "Reply cmd"]);
+        for p in &self.posts {
+            let text_preview: String = p.text.chars().take(60).collect::<String>()
+                + if p.text.chars().count() > 60 { "..." } else { "" };
+            table.add_row(vec![
+                format!("{}m", p.age_minutes),
+                format!("@{}", p.author),
+                format_followers(p.author_followers),
+                text_preview,
+                p.likes.to_string(),
+                p.reply_command.clone(),
+            ]);
+        }
+        table
+    }
+}
+
+pub async fn feed(
+    ctx: Arc<AppContext>,
+    format: OutputFormat,
+    topic: &str,
+    min_followers: u64,
+    max_age_mins: u64,
+    count: usize,
+) -> Result<(), XmasterError> {
+    let api = crate::providers::xapi::XApi::new(ctx.clone());
+
+    // Calculate start_time from max_age_mins
+    let start_time = {
+        let now = chrono::Utc::now();
+        let since = now - chrono::Duration::minutes(max_age_mins as i64);
+        since.to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+    };
+
+    // Search for recent posts on this topic
+    let tweets = api.search_tweets_paginated(
+        topic,
+        "recent",
+        100.min(count * 5), // fetch more than needed to filter
+        Some(&start_time),
+        None,
+    ).await?;
+
+    let now = chrono::Utc::now();
+    let mut posts: Vec<FeedPost> = Vec::new();
+    let total_found = tweets.len();
+    let mut filtered_count = 0usize;
+
+    for t in tweets {
+        let author_followers = t.author_followers.unwrap_or(0);
+        if author_followers < min_followers {
+            filtered_count += 1;
+            continue;
+        }
+
+        // Skip replies and retweets — we want original posts
+        if let Some(refs) = &t.referenced_tweets {
+            if refs.iter().any(|r| r.ref_type == "retweeted" || r.ref_type == "replied_to") {
+                continue;
+            }
+        }
+
+        let age_minutes = t.created_at.as_deref()
+            .and_then(|s| chrono::DateTime::parse_from_rfc3339(s).ok())
+            .map(|dt| (now - dt.with_timezone(&chrono::Utc)).num_minutes())
+            .unwrap_or(0);
+
+        let metrics = t.public_metrics.as_ref();
+        let author = t.author_username
+            .unwrap_or_else(|| t.author_id.unwrap_or_default());
+
+        posts.push(FeedPost {
+            reply_command: format!("xmaster reply {} \"your reply\"", t.id),
+            id: t.id,
+            author: author.clone(),
+            author_followers,
+            text: t.text,
+            age_minutes,
+            likes: metrics.map(|m| m.like_count).unwrap_or(0),
+            replies: metrics.map(|m| m.reply_count).unwrap_or(0),
+        });
+    }
+
+    // Sort by freshest first (lowest age)
+    posts.sort_by_key(|p| p.age_minutes);
+    posts.truncate(count);
+
+    let result = FeedResult {
+        topic: topic.to_string(),
+        posts,
+        total_found,
+        filtered_by_followers: filtered_count,
+    };
+
+    output::render(format, &result, None);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
 /// Extract @usernames from xAI search result text.
 fn extract_usernames_from_text(text: &str) -> Vec<String> {
     let mut usernames = Vec::new();

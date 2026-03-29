@@ -99,7 +99,7 @@ pub fn execute(format: OutputFormat) {
             // Lists
             "lists".into(),
             // Intelligence
-            "analyze".into(), "engage recommend".into(),
+            "analyze".into(), "engage recommend".into(), "engage feed".into(),
             "track run".into(), "track status".into(),
             "track followers".into(), "track growth".into(),
             "report daily".into(), "report weekly".into(),

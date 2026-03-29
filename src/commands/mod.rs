@@ -89,6 +89,9 @@ pub async fn dispatch(
             EngageCommands::Recommend { topic, min_followers, count } => {
                 engage_recommend::recommend(ctx, format, topic.as_deref(), *min_followers, *count).await
             }
+            EngageCommands::Feed { topic, min_followers, max_age_mins, count } => {
+                engage_recommend::feed(ctx, format, topic, *min_followers, *max_age_mins, *count).await
+            }
         },
         Commands::Update { check } => update::execute(*check).await,
         Commands::Star => {
