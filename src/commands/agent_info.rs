@@ -152,7 +152,7 @@ pub fn execute(format: OutputFormat) {
             "schedule add".into(), "schedule list".into(), "schedule cancel".into(),
             "schedule reschedule".into(), "schedule fire".into(), "schedule setup".into(),
             // System
-            "config show".into(), "config set".into(), "config check".into(),
+            "config show".into(), "config get".into(), "config set".into(), "config check".into(),
             "config web-login".into(),
             "rate-limits".into(), "agent-info".into(), "update".into(),
         ],
@@ -230,6 +230,8 @@ pub fn execute(format: OutputFormat) {
             "Use 'xmaster timeline --sort impressions' to find your best-performing posts".into(),
             "Use 'xmaster timeline --since 24h' to check recent post performance".into(),
             "Use 'xmaster engage recommend --topic \"your niche\"' to find high-ROI reply targets".into(),
+            "Use 'xmaster config get style.voice' to read the current voice before updating it — adapt, don't replace".into(),
+            "Set account.premium to true if you have X Premium — unlocks 25k char limit instead of 280".into(),
         ],
         handoffs: vec![
             Handoff {

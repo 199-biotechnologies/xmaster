@@ -93,7 +93,10 @@ xmaster config web-login
 # 6. (Optional) Set your writing style — agents will write in your voice
 xmaster config set style.voice "your style description"
 
-# 7. Post
+# 7. (Optional) Enable X Premium features (25k char limit instead of 280)
+xmaster config set account.premium true
+
+# 8. Post
 xmaster post "Hello from xmaster"
 ```
 
@@ -232,6 +235,7 @@ Posts are stored locally in SQLite — no X Ads API needed, pure local schedulin
 | Command | Description | Example |
 |---------|-------------|---------|
 | `config show` | Show config (keys masked) | `xmaster config show` |
+| `config get` | Get a single config value | `xmaster config get style.voice` |
 | `config set` | Set a config value | `xmaster config set keys.api_key KEY` |
 | `config check` | Validate credentials | `xmaster config check` |
 | `config web-login` | Auto-capture browser cookies (reply fallback) | `xmaster config web-login` |
@@ -371,6 +375,7 @@ Override with `XMASTER_CONFIG_DIR` env var.
 
 ```bash
 xmaster config show       # View current config (keys masked)
+xmaster config get K      # Read a single value (e.g. style.voice)
 xmaster config check      # Validate all credentials
 xmaster config set K V    # Set a value
 ```

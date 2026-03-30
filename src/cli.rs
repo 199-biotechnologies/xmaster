@@ -569,6 +569,11 @@ pub enum DmCommands {
 pub enum ConfigCommands {
     /// Show current configuration (keys masked)
     Show,
+    /// Get a single configuration value (raw, no masking for non-secret keys)
+    Get {
+        /// Key path (e.g., style.voice, account.premium)
+        key: String,
+    },
     /// Set a configuration value
     Set {
         /// Key path (e.g., keys.api_key)

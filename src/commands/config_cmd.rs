@@ -138,6 +138,46 @@ pub async fn show(_ctx: Arc<AppContext>, format: OutputFormat) -> Result<(), Xma
     Ok(())
 }
 
+pub async fn get(format: OutputFormat, key: &str) -> Result<(), XmasterError> {
+    let cfg = config::load_config()?;
+    let value = match key {
+        "style.voice" => cfg.style.voice.clone(),
+        "account.premium" => cfg.account.premium.to_string(),
+        "settings.timeout" => cfg.settings.timeout.to_string(),
+        "keys.xai" => mask(&cfg.keys.xai),
+        "keys.api_key" => mask(&cfg.keys.api_key),
+        "keys.api_secret" => mask(&cfg.keys.api_secret),
+        "keys.access_token" => mask(&cfg.keys.access_token),
+        "keys.access_token_secret" => mask(&cfg.keys.access_token_secret),
+        "keys.oauth2_client_id" => mask(&cfg.keys.oauth2_client_id),
+        "keys.oauth2_client_secret" => mask(&cfg.keys.oauth2_client_secret),
+        "keys.oauth2_access_token" => mask(&cfg.keys.oauth2_access_token),
+        "keys.oauth2_refresh_token" => mask(&cfg.keys.oauth2_refresh_token),
+        "keys.web_ct0" => mask(&cfg.keys.web_ct0),
+        "keys.web_auth_token" => mask(&cfg.keys.web_auth_token),
+        "keys.graphql_create_tweet_id" => mask(&cfg.keys.graphql_create_tweet_id),
+        _ => return Err(XmasterError::Config(format!("Unknown config key: {key}"))),
+    };
+    let display = ConfigGetResult { key: key.to_string(), value };
+    output::render(format, &display, None);
+    Ok(())
+}
+
+#[derive(Serialize)]
+struct ConfigGetResult {
+    key: String,
+    value: String,
+}
+
+impl Tableable for ConfigGetResult {
+    fn to_table(&self) -> comfy_table::Table {
+        let mut table = comfy_table::Table::new();
+        table.set_header(vec!["Key", "Value"]);
+        table.add_row(vec![&self.key, &self.value]);
+        table
+    }
+}
+
 /// Write a config key without emitting any output. Used internally by commands
 /// like `web-login` that produce their own output envelope.
 /// Returns the previous value if one existed (so callers can warn about overwrites).
