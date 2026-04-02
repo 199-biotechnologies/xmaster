@@ -63,6 +63,9 @@ pub struct Keys {
     /// GraphQL CreateTweet query ID (rotates every few weeks, auto-updated)
     #[serde(default)]
     pub graphql_create_tweet_id: String,
+    /// GraphQL CreateNoteTweet query ID for Premium long posts (rotates, auto-updated)
+    #[serde(default)]
+    pub graphql_create_note_tweet_id: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

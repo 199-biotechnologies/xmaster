@@ -24,6 +24,10 @@ const WEB_BEARER: &str = "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz
 /// Can be overridden via config: keys.graphql_create_tweet_id
 const DEFAULT_GRAPHQL_CREATE_TWEET_ID: &str = "oB-5XsHNAbjvARJEc8CZFw";
 
+/// Default GraphQL CreateNoteTweet query ID for Premium long-form posts (>280 chars).
+/// Can be overridden via config: keys.graphql_create_note_tweet_id
+const DEFAULT_GRAPHQL_CREATE_NOTE_TWEET_ID: &str = "iCUB42lIfXf9qPKctjE5rQ";
+
 // ---------------------------------------------------------------------------
 // Rate limit info
 // ---------------------------------------------------------------------------
@@ -631,6 +635,8 @@ impl XApi {
 
     /// Post a tweet via X's internal GraphQL web endpoint using browser cookies.
     /// This bypasses the API reply restriction since it behaves like a browser session.
+    /// For Premium accounts posting >280 chars, uses CreateNoteTweet mutation instead
+    /// of CreateTweet (which hard-caps at 280 regardless of Premium status).
     async fn create_tweet_via_web(
         &self,
         text: &str,
@@ -639,16 +645,30 @@ impl XApi {
         media_ids: Option<&[String]>,
     ) -> Result<TweetResponse, XmasterError> {
         let keys = &self.ctx.config.keys;
-        let query_id = if keys.graphql_create_tweet_id.is_empty() {
-            DEFAULT_GRAPHQL_CREATE_TWEET_ID.to_string()
+
+        // Select mutation: CreateNoteTweet for Premium long posts, CreateTweet otherwise
+        let is_note_tweet = text.chars().count() > 280 && self.ctx.config.account.premium;
+        let (query_id, operation_name) = if is_note_tweet {
+            let id = if keys.graphql_create_note_tweet_id.is_empty() {
+                DEFAULT_GRAPHQL_CREATE_NOTE_TWEET_ID.to_string()
+            } else {
+                keys.graphql_create_note_tweet_id.clone()
+            };
+            (id, "CreateNoteTweet")
         } else {
-            keys.graphql_create_tweet_id.clone()
+            let id = if keys.graphql_create_tweet_id.is_empty() {
+                DEFAULT_GRAPHQL_CREATE_TWEET_ID.to_string()
+            } else {
+                keys.graphql_create_tweet_id.clone()
+            };
+            (id, "CreateTweet")
         };
+
         let ct0 = &keys.web_ct0;
         let auth_token = &keys.web_auth_token;
 
         // Generate x-client-transaction-id natively (no Python dependency)
-        let gql_path = format!("/i/api/graphql/{query_id}/CreateTweet");
+        let gql_path = format!("/i/api/graphql/{query_id}/{operation_name}");
         let transaction_id = crate::transaction_id::generate(
             &self.ctx.client, "POST", &gql_path, ct0, auth_token,
         )
@@ -688,6 +708,11 @@ impl XApi {
             variables["media"]["media_entities"] = json!(entities);
         }
 
+        // CreateNoteTweet requires richtext_options for long-form posts
+        if is_note_tweet {
+            variables["richtext_options"] = json!({ "richtext_tags": [] });
+        }
+
         let gql_body = json!({
             "variables": variables,
             "features": {
@@ -719,9 +744,7 @@ impl XApi {
 
         let cookie_header = format!("ct0={ct0}; auth_token={auth_token}");
         let bearer = format!("Bearer {WEB_BEARER}");
-        let gql_url = format!(
-            "https://x.com/i/api/graphql/{query_id}/CreateTweet"
-        );
+        let gql_url = format!("https://x.com{gql_path}");
 
         let resp = self
             .ctx
@@ -754,6 +777,14 @@ impl XApi {
         let body_text = resp.text().await.unwrap_or_default();
 
         if !status.is_success() {
+            // Specific error for Premium long posts that get rejected
+            if is_note_tweet && (body_text.contains("186") || body_text.contains("shorter")) {
+                return Err(XmasterError::Api {
+                    provider: "x-web",
+                    code: "note_tweet_rejected",
+                    message: "Long post rejected by X. Verify your X Premium subscription is active.".into(),
+                });
+            }
             return Err(XmasterError::Api {
                 provider: "x-web",
                 code: "graphql_error",
@@ -771,9 +802,14 @@ impl XApi {
             message: format!("Failed to parse GraphQL response: {}", crate::utils::safe_truncate(&body_text, 200)),
         })?;
 
-        // Navigate: data.create_tweet.tweet_results.result.rest_id
+        // Navigate response: CreateNoteTweet uses data.notetweet_create, CreateTweet uses data.create_tweet
+        let result_path = if is_note_tweet {
+            "/data/notetweet_create/tweet_results/result"
+        } else {
+            "/data/create_tweet/tweet_results/result"
+        };
         let tweet_result = val
-            .pointer("/data/create_tweet/tweet_results/result")
+            .pointer(result_path)
             .ok_or_else(|| XmasterError::Api {
                 provider: "x-web",
                 code: "no_tweet_result",

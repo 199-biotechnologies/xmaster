@@ -87,27 +87,25 @@ pub async fn execute(
     let analysis = preflight::analyze(text, &analyze_ctx);
     let mut warnings = Vec::new();
 
-    if !is_reply {
-        // Only flag issues on standalone posts; replies have different rules
-        for issue in &analysis.issues {
-            if issue.severity == preflight::Severity::Critical {
-                warnings.push(format!("[CRITICAL] {}: {}", issue.code, issue.message));
-            } else if issue.severity == preflight::Severity::Warning {
-                warnings.push(format!("[WARN] {}", issue.message));
-            }
+    // Always show critical issues (over_limit, empty); skip engagement warnings for replies
+    for issue in &analysis.issues {
+        if issue.severity == preflight::Severity::Critical {
+            warnings.push(format!("[CRITICAL] {}: {}", issue.code, issue.message));
+        } else if !is_reply && issue.severity == preflight::Severity::Warning {
+            warnings.push(format!("[WARN] {}", issue.message));
         }
+    }
 
-        // Show warnings in table mode (non-intrusively on stderr)
-        if format == OutputFormat::Table && !warnings.is_empty() {
-            eprintln!("--- Pre-flight ({}/100, {}) ---", analysis.score, analysis.grade);
-            for w in &warnings {
-                eprintln!("  {w}");
-            }
-            if !analysis.suggestions.is_empty() {
-                eprintln!("  Tip: {}", analysis.suggestions[0]);
-            }
-            eprintln!("---");
+    // Show warnings in table mode (non-intrusively on stderr)
+    if format == OutputFormat::Table && !warnings.is_empty() {
+        eprintln!("--- Pre-flight ({}/100, {}) ---", analysis.score, analysis.grade);
+        for w in &warnings {
+            eprintln!("  {w}");
         }
+        if !is_reply && !analysis.suggestions.is_empty() {
+            eprintln!("  Tip: {}", analysis.suggestions[0]);
+        }
+        eprintln!("---");
     }
 
     // ── Cannibalization check (is a recent post still gaining traction?) ──
