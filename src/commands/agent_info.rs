@@ -223,7 +223,7 @@ pub fn execute(format: OutputFormat) {
         },
         usage_hints: vec![
             "Always run 'xmaster analyze' before posting — it checks for common issues that hurt reach".into(),
-            "Use 'xmaster search-ai' over 'xmaster search' — cheaper and smarter (xAI vs X API)".into(),
+            "Use 'xmaster search-ai' over 'xmaster search' — cheaper and smarter (xAI vs X API). Supports from:username for hard author filtering (e.g. 'xmaster search-ai \"from:elonmusk AI\"')".into(),
             "Reply to larger accounts in your niche — replies are a high-value signal (estimated ~20x a like)".into(),
             "Create content people want to DM to friends — DM shares are estimated ~25x a like".into(),
             "Never put external links in the main tweet body — put them in the first reply".into(),

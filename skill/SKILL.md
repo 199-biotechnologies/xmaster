@@ -31,8 +31,10 @@ xmaster engage feed "longevity biotech" --min-followers 5000 --max-age-mins 60
 # Or find accounts to build relationships with:
 xmaster engage recommend --topic "longevity" --min-followers 1000
 
-# Then search their recent posts:
-xmaster search "from:username" --since 24h
+# Search their recent posts (from: operator parsed into hard author filter):
+xmaster search-ai "from:username"                    # Latest posts by user
+xmaster search-ai "from:username longevity"           # Their posts on a topic
+xmaster search-ai "from:user1 from:user2 senolytics"  # Multiple authors
 ```
 
 ### Checking Performance
