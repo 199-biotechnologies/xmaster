@@ -111,7 +111,7 @@ pub enum Commands {
         #[arg(long)]
         user: Option<String>,
         /// Number of tweets
-        #[arg(long, short, default_value = "10")]
+        #[arg(long, short, alias = "limit", default_value = "10")]
         count: usize,
         /// Only show posts after this time (e.g. "12h", "7d", or ISO 8601)
         #[arg(long)]
@@ -127,7 +127,7 @@ pub enum Commands {
     /// View your mentions
     Mentions {
         /// Number of mentions
-        #[arg(long, short, default_value = "10")]
+        #[arg(long, short, alias = "limit", default_value = "10")]
         count: usize,
         /// Only show mentions after this tweet ID
         #[arg(long)]
@@ -142,7 +142,7 @@ pub enum Commands {
         #[arg(long, default_value = "recent")]
         mode: String,
         /// Number of results
-        #[arg(long, short, default_value = "10")]
+        #[arg(long, short, alias = "limit", default_value = "10")]
         count: usize,
         /// Only show posts after this time (e.g. "12h", "7d", or ISO 8601)
         #[arg(long)]
@@ -157,7 +157,7 @@ pub enum Commands {
         /// Search query
         query: String,
         /// Number of results
-        #[arg(long, short, default_value = "10")]
+        #[arg(long, short, alias = "limit", default_value = "10")]
         count: usize,
         /// Filter by date (from)
         #[arg(long)]
@@ -200,7 +200,7 @@ pub enum Commands {
         /// Username (without @)
         username: String,
         /// Number of results
-        #[arg(long, short, default_value = "20")]
+        #[arg(long, short, alias = "limit", default_value = "20")]
         count: usize,
     },
 
@@ -209,7 +209,7 @@ pub enum Commands {
         /// Username (without @)
         username: String,
         /// Number of results
-        #[arg(long, short, default_value = "20")]
+        #[arg(long, short, alias = "limit", default_value = "20")]
         count: usize,
     },
 
@@ -372,7 +372,7 @@ pub enum Commands {
         #[arg(long)]
         min_likes: Option<i64>,
         /// Number of results
-        #[arg(long, default_value = "20")]
+        #[arg(long, alias = "limit", default_value = "20")]
         count: usize,
     },
 
@@ -444,7 +444,7 @@ pub enum EngageCommands {
         #[arg(long, default_value = "1000")]
         min_followers: u32,
         /// Number of recommendations
-        #[arg(long, short, default_value = "5")]
+        #[arg(long, short, alias = "limit", default_value = "5")]
         count: usize,
     },
     /// Manage your niche watchlist (accounts you track but don't follow)
@@ -476,7 +476,7 @@ pub enum EngageCommands {
         #[arg(long, default_value = "60")]
         max_age_mins: u64,
         /// Number of posts to return (unified across all topics)
-        #[arg(long, short, default_value = "10")]
+        #[arg(long, short, alias = "limit", default_value = "10")]
         count: usize,
     },
     /// Rank accounts you've already replied to by downstream reply performance.
@@ -499,7 +499,7 @@ pub enum EngageCommands {
         #[arg(long, default_value = "1")]
         min_samples: i64,
         /// Number of results
-        #[arg(long, short, default_value = "10")]
+        #[arg(long, short, alias = "limit", default_value = "10")]
         count: usize,
         /// Sort order: score | avg-impressions | avg-profile-clicks | reply-back-rate
         #[arg(long, default_value = "score")]
@@ -667,7 +667,7 @@ pub enum DmCommands {
     /// View DM inbox
     Inbox {
         /// Number of conversations
-        #[arg(long, short, default_value = "10")]
+        #[arg(long, short, alias = "limit", default_value = "10")]
         count: usize,
     },
     /// View a DM thread
@@ -675,7 +675,7 @@ pub enum DmCommands {
         /// Conversation ID
         id: String,
         /// Number of messages
-        #[arg(long, short, default_value = "20")]
+        #[arg(long, short, alias = "limit", default_value = "20")]
         count: usize,
     },
 }
@@ -710,7 +710,7 @@ pub enum ConfigCommands {
 pub enum BookmarkCommands {
     /// List recent bookmarks
     List {
-        #[arg(long, short, default_value = "10")]
+        #[arg(long, short, alias = "limit", default_value = "10")]
         count: usize,
         /// Show only unread
         #[arg(long)]
@@ -719,7 +719,7 @@ pub enum BookmarkCommands {
     /// Sync bookmarks from X to local database (preserves deleted tweets)
     Sync {
         /// Number of bookmarks to fetch from X
-        #[arg(long, short, default_value = "100")]
+        #[arg(long, short, alias = "limit", default_value = "100")]
         count: usize,
     },
     /// Search saved bookmarks locally
