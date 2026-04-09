@@ -434,7 +434,9 @@ pub async fn export(
                 output::render(format, &display, None);
                 return Ok(());
             }
-            println!("{md}");
+            // Markdown export goes to stdout. When piped, the agent gets
+            // raw markdown (intentional — they asked for export, not JSON).
+            print!("{md}");
             "stdout".to_string()
         }
     };

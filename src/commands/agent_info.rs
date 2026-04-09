@@ -3,6 +3,22 @@ use crate::output::{self, OutputFormat, Tableable};
 use serde::Serialize;
 
 #[derive(Serialize)]
+struct ExitCodes {
+    success: &'static str,
+    transient: &'static str,
+    config: &'static str,
+    bad_input: &'static str,
+    rate_limited: &'static str,
+}
+
+#[derive(Serialize)]
+struct Envelope {
+    version: &'static str,
+    success: &'static str,
+    error: &'static str,
+}
+
+#[derive(Serialize)]
 struct AgentInfo {
     name: String,
     version: String,
@@ -11,6 +27,9 @@ struct AgentInfo {
     capabilities: Vec<String>,
     env_prefix: String,
     config_path: String,
+    auto_json_when_piped: bool,
+    exit_codes: ExitCodes,
+    envelope: Envelope,
     /// Algorithm intelligence — agents read this to understand how to optimise.
     /// Source: xai-org/x-algorithm open-source code (January 2026).
     algorithm: AlgorithmInfo,
@@ -140,13 +159,17 @@ pub fn execute(format: OutputFormat) {
             // Bookmarks
             "bookmarks list".into(), "bookmarks sync".into(), "bookmarks search".into(),
             "bookmarks export".into(), "bookmarks digest".into(), "bookmarks stats".into(),
+            "bookmarks folders".into(), "bookmarks folder".into(),
             // Lists
-            "lists".into(),
+            "lists create".into(), "lists delete".into(), "lists add".into(),
+            "lists remove".into(), "lists timeline".into(), "lists members".into(),
+            "lists mine".into(),
             // Intelligence
             "analyze".into(), "engage recommend".into(), "engage feed".into(),
             "engage hot-targets".into(),
+            "engage watchlist add".into(), "engage watchlist list".into(), "engage watchlist remove".into(),
             "likers".into(), "retweeters".into(), "quotes".into(), "users".into(),
-            "amplifiers".into(),
+            "amplifiers".into(), "volume".into(),
             "track run".into(), "track status".into(),
             "track followers".into(), "track growth".into(),
             "report daily".into(), "report weekly".into(),
@@ -156,9 +179,11 @@ pub fn execute(format: OutputFormat) {
             "schedule reschedule".into(), "schedule fire".into(), "schedule setup".into(),
             // System
             "config show".into(), "config get".into(), "config set".into(), "config check".into(),
-            "config web-login".into(),
+            "config auth".into(), "config guide".into(), "config web-login".into(),
             "inspire".into(),
             "rate-limits".into(), "agent-info".into(), "update".into(),
+            "skill install".into(), "skill update".into(), "skill status".into(),
+            "star".into(),
         ],
         capabilities: vec![
             "tweet_crud".into(), "engagement".into(), "social_graph".into(),
@@ -173,6 +198,19 @@ pub fn execute(format: OutputFormat) {
         ],
         env_prefix: "XMASTER_".into(),
         config_path: config::config_path().to_string_lossy().to_string(),
+        auto_json_when_piped: true,
+        exit_codes: ExitCodes {
+            success: "0: Success — continue",
+            transient: "1: Transient error (IO, network) — retry with backoff",
+            config: "2: Config error (missing key, bad file) — fix setup, do not retry",
+            bad_input: "3: Bad input (invalid args, denied command) — fix arguments",
+            rate_limited: "4: Rate limited — wait, then retry",
+        },
+        envelope: Envelope {
+            version: "1",
+            success: "{ version, status: \"success\", data, metadata }",
+            error: "{ version, status: \"error\", error: { code, message, suggestion } }",
+        },
         algorithm: AlgorithmInfo {
             source: "xai-org/x-algorithm (January 2026, Grok-based transformer). Exact weights unpublished — estimates below from code structure + empirical data.".into(),
             weights: vec![

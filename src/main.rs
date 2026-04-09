@@ -18,6 +18,12 @@ use context::AppContext;
 use output::OutputFormat;
 use std::sync::Arc;
 
+/// Pre-scan argv for --json before clap parses. This ensures --json is
+/// honored on help, version, and parse-error paths (agent-cli-framework).
+fn has_json_flag() -> bool {
+    std::env::args_os().any(|a| a == "--json")
+}
+
 #[tokio::main]
 async fn main() {
     // Activate tracing — honours RUST_LOG (e.g. RUST_LOG=xmaster=debug)
@@ -29,7 +35,28 @@ async fn main() {
         .with_writer(std::io::stderr)
         .init();
 
-    let cli = Cli::parse();
+    let json_flag = has_json_flag();
+
+    // try_parse so we own the exit code, not clap.
+    // --help and --version exit 0 (not 3). Parse errors exit 3.
+    let cli = match Cli::try_parse() {
+        Ok(cli) => cli,
+        Err(e) => {
+            if matches!(
+                e.kind(),
+                clap::error::ErrorKind::DisplayHelp
+                    | clap::error::ErrorKind::DisplayVersion
+            ) {
+                // Help/version are informational — always exit 0.
+                e.exit();
+            }
+            // Parse errors — we own the exit code. Exit 3 (bad input).
+            let format = OutputFormat::detect(json_flag);
+            output::render_error(format, "bad_input", &e.to_string(), "Check arguments with: xmaster --help");
+            std::process::exit(3);
+        }
+    };
+
     let format = OutputFormat::detect(cli.json);
 
     let config = match load_config() {

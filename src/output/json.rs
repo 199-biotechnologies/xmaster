@@ -20,5 +20,7 @@ pub fn render_error(code: &str, message: &str, suggestion: &str) {
             "suggestion": suggestion,
         },
     });
-    println!("{}", serde_json::to_string_pretty(&envelope).unwrap_or_default());
+    // Errors go to stderr per agent-cli-framework invariant 6:
+    // `tool cmd | jq` must never see error JSON on stdout.
+    eprintln!("{}", serde_json::to_string_pretty(&envelope).unwrap_or_default());
 }

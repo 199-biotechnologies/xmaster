@@ -50,7 +50,7 @@ pub async fn execute(check: bool) -> Result<(), XmasterError> {
     let latest = release.tag_name.trim_start_matches('v');
 
     if latest == current {
-        println!("Already up to date (v{current})");
+        eprintln!("Already up to date (v{current})");
         return Ok(());
     }
 
@@ -58,13 +58,13 @@ pub async fn execute(check: bool) -> Result<(), XmasterError> {
     let current_parts: Vec<u32> = current.split('.').filter_map(|s| s.parse().ok()).collect();
     let latest_parts: Vec<u32> = latest.split('.').filter_map(|s| s.parse().ok()).collect();
     if latest_parts <= current_parts {
-        println!("Already up to date (v{current}, latest release is v{latest})");
+        eprintln!("Already up to date (v{current}, latest release is v{latest})");
         return Ok(());
     }
 
     if check {
-        println!("Update available: v{current} -> v{latest}");
-        println!("Run `xmaster update` to install");
+        eprintln!("Update available: v{current} -> v{latest}");
+        eprintln!("Run `xmaster update` to install");
         return Ok(());
     }
 
@@ -81,7 +81,7 @@ pub async fn execute(check: bool) -> Result<(), XmasterError> {
             ))
         })?;
 
-    println!("Downloading {target} v{latest}...");
+    eprintln!("Downloading {target} v{latest}...");
     let bytes = client
         .get(&asset.browser_download_url)
         .send()
@@ -108,7 +108,7 @@ pub async fn execute(check: bool) -> Result<(), XmasterError> {
     std::fs::rename(&tmp, &current_exe)
         .map_err(|e| XmasterError::Config(format!("Failed to replace binary: {e}")))?;
 
-    println!("Updated: v{current} -> v{latest}");
-    println!("Run `xmaster skill update` to sync the skill file.");
+    eprintln!("Updated: v{current} -> v{latest}");
+    eprintln!("Run `xmaster skill update` to sync the skill file.");
     Ok(())
 }

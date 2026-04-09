@@ -115,11 +115,11 @@ fn json_error_has_correct_envelope() {
         .output()
         .expect("failed to run");
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    // Should have error envelope structure
-    assert!(stdout.contains("\"status\": \"error\""));
-    assert!(stdout.contains("\"code\""));
-    assert!(stdout.contains("\"suggestion\""));
+    // Error envelopes go to stderr per agent-cli-framework invariant 6.
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("\"status\": \"error\""));
+    assert!(stderr.contains("\"code\""));
+    assert!(stderr.contains("\"suggestion\""));
 }
 
 // ─── Tweet ID Parsing ───────────────────────────────────────────

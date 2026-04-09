@@ -63,7 +63,7 @@ impl XmasterError {
             Self::Api { .. } | Self::Http(_) => 1,
             Self::Media(_) => 1,
             Self::NotFound(_) => 1,
-            Self::CommandDenied(_) => 5,
+            Self::CommandDenied(_) => 3,
             Self::Json(_) => 1,
             Self::Io(_) => 1,
             Self::OAuth(_) => 3,
