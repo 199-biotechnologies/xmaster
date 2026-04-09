@@ -305,6 +305,13 @@ pub enum Commands {
         usernames: Vec<String>,
     },
 
+    /// Show who amplifies your content (users who repost your tweets)
+    Amplifiers {
+        /// Max reposts to scan (10-100)
+        #[arg(long, short, alias = "limit", default_value = "50")]
+        count: usize,
+    },
+
     /// Show API rate limit status
     RateLimits,
 

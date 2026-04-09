@@ -36,6 +36,9 @@ pub enum XmasterError {
     #[error("Not found: {0}")]
     NotFound(String),
 
+    #[error("Command denied: {0}")]
+    CommandDenied(String),
+
     #[error(transparent)]
     Http(#[from] reqwest::Error),
 
@@ -60,6 +63,7 @@ impl XmasterError {
             Self::Api { .. } | Self::Http(_) => 1,
             Self::Media(_) => 1,
             Self::NotFound(_) => 1,
+            Self::CommandDenied(_) => 5,
             Self::Json(_) => 1,
             Self::Io(_) => 1,
             Self::OAuth(_) => 3,
@@ -76,6 +80,7 @@ impl XmasterError {
             Self::Config(_) => "config_error",
             Self::Media(_) => "media_error",
             Self::NotFound(_) => "not_found",
+            Self::CommandDenied(_) => "command_denied",
             Self::Http(_) => "http_error",
             Self::Json(_) => "json_error",
             Self::Io(_) => "io_error",

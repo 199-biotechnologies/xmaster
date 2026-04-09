@@ -1367,7 +1367,47 @@ impl XApi {
         Ok(users)
     }
 
+    /// Get tweets by other users that repost the authenticated user's content.
+    /// Wraps GET /2/users/reposts_of_me (user-context endpoint, no :id in path).
+    pub async fn get_reposts_of_me(
+        &self,
+        count: usize,
+    ) -> Result<Vec<TweetData>, XmasterError> {
+        let max = count.clamp(10, 100);
+        let url = format!(
+            "{BASE}/users/reposts_of_me?max_results={max}&{tf}&{exp}&{uf}",
+            tf = Self::tweet_fields(),
+            exp = Self::tweet_expansions(),
+            uf = Self::user_fields_param(),
+        );
+        let (mut tweets, includes) =
+            self.request_list::<TweetData>(Method::GET, &url, None).await?;
+        Self::merge_authors(&mut tweets, &includes);
+        Ok(tweets)
+    }
+
     // -- Search -------------------------------------------------------------
+
+    /// Search for users by keyword. Wraps GET /2/users/search.
+    /// Returns users with full public metrics so callers get follower counts.
+    pub async fn search_users(
+        &self,
+        query: &str,
+        count: usize,
+    ) -> Result<Vec<UserResponse>, XmasterError> {
+        let max = count.clamp(1, 100);
+        let encoded = percent_encoding::utf8_percent_encode(
+            query,
+            percent_encoding::NON_ALPHANUMERIC,
+        );
+        let url = format!(
+            "{BASE}/users/search?query={encoded}&max_results={max}&{uf}",
+            uf = Self::user_fields_param(),
+        );
+        let (users, _includes) =
+            self.request_list::<UserResponse>(Method::GET, &url, None).await?;
+        Ok(users)
+    }
 
     pub async fn search_tweets(
         &self,

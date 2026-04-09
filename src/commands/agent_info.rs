@@ -146,6 +146,7 @@ pub fn execute(format: OutputFormat) {
             "analyze".into(), "engage recommend".into(), "engage feed".into(),
             "engage hot-targets".into(),
             "likers".into(), "retweeters".into(), "quotes".into(), "users".into(),
+            "amplifiers".into(),
             "track run".into(), "track status".into(),
             "track followers".into(), "track growth".into(),
             "report daily".into(), "report weekly".into(),
@@ -250,6 +251,8 @@ pub fn execute(format: OutputFormat) {
             "Use 'xmaster likers <id>' / 'xmaster retweeters <id>' / 'xmaster quotes <id>' to inspect who engaged with a specific post — each returns a clean user/tweet list. 'quotes' also caches the quote tweets into your discovered_posts library for later 'xmaster inspire' browsing".into(),
             "Batch-lookup many users at once with 'xmaster users alice bob carol' — one HTTP call for up to 100 usernames. Use this whenever you need to hydrate a list of accounts; never loop per-user".into(),
             "'xmaster lists members <list_id>' returns the users in a given list (max 100 per call). Useful for auditing community membership or extracting target sets from curated lists".into(),
+            "'xmaster amplifiers' shows who reposts your content. High-frequency reposters are your audience amplifiers — add them to your watchlist to nurture the relationship".into(),
+            "XMASTER_ALLOW_COMMANDS and XMASTER_DENY_COMMANDS env vars restrict which commands agents can run. Deny takes precedence. agent-info, config, rate-limits, update, skill are always allowed".into(),
         ],
         handoffs: vec![
             Handoff {

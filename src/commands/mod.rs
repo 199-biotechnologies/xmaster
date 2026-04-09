@@ -27,6 +27,7 @@ pub mod read_post;
 pub mod inspire;
 pub mod tweet_engagement;
 pub mod quotes;
+pub mod amplifiers;
 
 use crate::cli::{Cli, Commands, ConfigCommands, DmCommands, EngageCommands, WatchlistCommands, ListCommands, TrackCommands, ReportCommands, SuggestCommands, ScheduleCommands, BookmarkCommands, SkillCommands};
 use crate::context::AppContext;
@@ -34,11 +35,151 @@ use crate::errors::XmasterError;
 use crate::output::OutputFormat;
 use std::sync::Arc;
 
+/// Extract the top-level command name as a lowercase string for allowlisting.
+fn command_name(cmd: &Commands) -> &'static str {
+    match cmd {
+        Commands::Post { .. } => "post",
+        Commands::Delete { .. } => "delete",
+        Commands::Like { .. } => "like",
+        Commands::Unlike { .. } => "unlike",
+        Commands::Retweet { .. } => "retweet",
+        Commands::Unretweet { .. } => "unretweet",
+        Commands::Bookmark { .. } => "bookmark",
+        Commands::Unbookmark { .. } => "unbookmark",
+        Commands::Follow { .. } => "follow",
+        Commands::Unfollow { .. } => "unfollow",
+        Commands::Dm { .. } => "dm",
+        Commands::Timeline { .. } => "timeline",
+        Commands::Mentions { .. } => "mentions",
+        Commands::Search { .. } => "search",
+        Commands::SearchAi { .. } => "search-ai",
+        Commands::Trending { .. } => "trending",
+        Commands::User { .. } => "user",
+        Commands::Me => "me",
+        Commands::Bookmarks { .. } => "bookmarks",
+        Commands::Followers { .. } => "followers",
+        Commands::Following { .. } => "following",
+        Commands::Config { .. } => "config",
+        Commands::AgentInfo => "agent-info",
+        Commands::Engage { .. } => "engage",
+        Commands::Update { .. } => "update",
+        Commands::Star => "star",
+        Commands::Thread { .. } => "thread",
+        Commands::Reply { .. } => "reply",
+        Commands::Metrics { .. } => "metrics",
+        Commands::Lists { .. } => "lists",
+        Commands::HideReply { .. } => "hide-reply",
+        Commands::UnhideReply { .. } => "unhide-reply",
+        Commands::Read { .. } => "read",
+        Commands::Replies { .. } => "replies",
+        Commands::Likers { .. } => "likers",
+        Commands::Retweeters { .. } => "retweeters",
+        Commands::Quotes { .. } => "quotes",
+        Commands::Users { .. } => "users",
+        Commands::Amplifiers { .. } => "amplifiers",
+        Commands::RateLimits => "rate-limits",
+        Commands::Block { .. } => "block",
+        Commands::Unblock { .. } => "unblock",
+        Commands::Mute { .. } => "mute",
+        Commands::Unmute { .. } => "unmute",
+        Commands::Analyze { .. } => "analyze",
+        Commands::Inspire { .. } => "inspire",
+        Commands::Track { .. } => "track",
+        Commands::Report { .. } => "report",
+        Commands::Suggest { .. } => "suggest",
+        Commands::Schedule { .. } => "schedule",
+        Commands::Skill { .. } => "skill",
+    }
+}
+
+/// Check XMASTER_ALLOW_COMMANDS / XMASTER_DENY_COMMANDS env vars.
+/// Deny takes precedence over allow. Agent-info and config are always
+/// allowed so operators can still introspect and reconfigure.
+fn check_command_access(cmd_name: &str) -> Result<(), XmasterError> {
+    // Always allow introspection + configuration commands
+    if matches!(cmd_name, "agent-info" | "config" | "rate-limits" | "update" | "skill") {
+        return Ok(());
+    }
+
+    if let Ok(deny) = std::env::var("XMASTER_DENY_COMMANDS") {
+        let denied: Vec<&str> = deny.split(',').map(|s| s.trim()).collect();
+        if denied.iter().any(|d| d.eq_ignore_ascii_case(cmd_name)) {
+            return Err(XmasterError::CommandDenied(format!(
+                "'{cmd_name}' is blocked by XMASTER_DENY_COMMANDS"
+            )));
+        }
+    }
+
+    if let Ok(allow) = std::env::var("XMASTER_ALLOW_COMMANDS") {
+        let allowed: Vec<&str> = allow.split(',').map(|s| s.trim()).collect();
+        if !allowed.iter().any(|a| a.eq_ignore_ascii_case(cmd_name)) {
+            return Err(XmasterError::CommandDenied(format!(
+                "'{cmd_name}' is not in XMASTER_ALLOW_COMMANDS"
+            )));
+        }
+    }
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod access_tests {
+    use super::*;
+
+    #[test]
+    fn deny_blocks_command() {
+        std::env::set_var("XMASTER_DENY_COMMANDS", "post,delete");
+        let r = check_command_access("post");
+        assert!(r.is_err());
+        assert!(r.unwrap_err().to_string().contains("blocked"));
+        std::env::remove_var("XMASTER_DENY_COMMANDS");
+    }
+
+    #[test]
+    fn deny_allows_unlisted() {
+        std::env::set_var("XMASTER_DENY_COMMANDS", "post,delete");
+        assert!(check_command_access("search").is_ok());
+        std::env::remove_var("XMASTER_DENY_COMMANDS");
+    }
+
+    #[test]
+    fn allow_restricts_to_listed() {
+        std::env::set_var("XMASTER_ALLOW_COMMANDS", "search,read,metrics");
+        assert!(check_command_access("search").is_ok());
+        let r = check_command_access("post");
+        assert!(r.is_err());
+        assert!(r.unwrap_err().to_string().contains("not in"));
+        std::env::remove_var("XMASTER_ALLOW_COMMANDS");
+    }
+
+    #[test]
+    fn introspection_always_allowed() {
+        std::env::set_var("XMASTER_DENY_COMMANDS", "agent-info,config");
+        assert!(check_command_access("agent-info").is_ok());
+        assert!(check_command_access("config").is_ok());
+        std::env::remove_var("XMASTER_DENY_COMMANDS");
+    }
+
+    #[test]
+    fn deny_takes_precedence_over_allow() {
+        std::env::set_var("XMASTER_ALLOW_COMMANDS", "post,search");
+        std::env::set_var("XMASTER_DENY_COMMANDS", "post");
+        let r = check_command_access("post");
+        assert!(r.is_err());
+        std::env::remove_var("XMASTER_ALLOW_COMMANDS");
+        std::env::remove_var("XMASTER_DENY_COMMANDS");
+    }
+}
+
 pub async fn dispatch(
     ctx: Arc<AppContext>,
     cli: &Cli,
     format: OutputFormat,
 ) -> Result<(), XmasterError> {
+    // Command access guard — check allowlist/denylist before any work.
+    let cmd_name = command_name(&cli.command);
+    check_command_access(cmd_name)?;
+
     match &cli.command {
         Commands::Post { text, reply_to, quote, media, poll, poll_duration } => {
             post::execute(ctx, format, text, reply_to.as_deref(), quote.as_deref(), media, poll.as_deref(), *poll_duration).await
@@ -144,6 +285,7 @@ pub async fn dispatch(
         Commands::Retweeters { id, count } => tweet_engagement::retweeters(ctx, format, id, *count).await,
         Commands::Quotes { id, count } => quotes::execute(ctx, format, id, *count).await,
         Commands::Users { usernames } => user::bulk(ctx, format, usernames).await,
+        Commands::Amplifiers { count } => amplifiers::execute(ctx, format, *count).await,
         Commands::RateLimits => rate_limits::execute(ctx, format).await,
         Commands::Block { username } => moderation::block(ctx, format, username).await,
         Commands::Unblock { username } => moderation::unblock(ctx, format, username).await,

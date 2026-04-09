@@ -148,11 +148,35 @@ pub async fn recommend(
         }
     }
 
-    // Phase 1c: Topic discovery via xAI search
+    // Phase 1c: Topic discovery via X user search (structured, with follower data)
+    // then xAI text search as fallback for additional candidates.
     if let Some(topic_str) = topic {
+        // Step 1: structured user search — returns verified accounts with real metrics
+        let xapi = crate::providers::xapi::XApi::new(ctx.clone());
+        if let Ok(users) = xapi.search_users(topic_str, 20).await {
+            for user in users {
+                let key = user.username.to_lowercase();
+                if candidates.contains_key(&key) {
+                    continue;
+                }
+                let followers = user
+                    .public_metrics
+                    .as_ref()
+                    .map(|m| m.followers_count)
+                    .unwrap_or(0);
+                candidates.entry(key).or_insert(RawCandidate {
+                    username: user.username,
+                    followers,
+                    reply_rate: 0.0,
+                    source: "user_search".into(),
+                    relevance: 1.0,
+                });
+            }
+        }
+
+        // Step 2: xAI text search as fallback for additional candidates
         let xai = XaiSearch::new(ctx.clone());
         if let Ok(result) = xai.search_posts(topic_str, 20, None, None, None).await {
-            // Extract usernames from citations and text
             let usernames = extract_usernames_from_text(&result.text);
             for username in usernames {
                 let key = username.to_lowercase();
@@ -163,8 +187,8 @@ pub async fn recommend(
                     username,
                     followers: 0,
                     reply_rate: 0.0,
-                    source: "topic".into(),
-                    relevance: 1.0,
+                    source: "topic_xai".into(),
+                    relevance: 0.8,
                 });
             }
         }
