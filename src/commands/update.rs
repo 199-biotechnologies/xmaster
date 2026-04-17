@@ -1,7 +1,7 @@
 use crate::errors::XmasterError;
 use serde::Deserialize;
 
-const REPO: &str = "paperfoot/xmaster";
+const REPO: &str = "paperfoot/xmaster-cli";
 
 #[derive(Deserialize)]
 struct GhRelease {

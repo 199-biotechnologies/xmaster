@@ -9,8 +9,8 @@ use crate::output::OutputFormat;
 use std::fs;
 use std::path::PathBuf;
 
-const REPO: &str = "paperfoot/xmaster";
-const REPO_URL: &str = "https://github.com/paperfoot/xmaster";
+const REPO: &str = "paperfoot/xmaster-cli";
+const REPO_URL: &str = "https://github.com/paperfoot/xmaster-cli";
 
 fn sentinel_path() -> PathBuf {
     config_dir().join(".star-prompted")
