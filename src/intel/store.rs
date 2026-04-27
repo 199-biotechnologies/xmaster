@@ -725,11 +725,14 @@ impl IntelStore {
     }
 
     /// Query the discovered posts library with optional filters.
+    /// `min_chars` filters by raw text length — pass `Some(500)` to surface
+    /// long-form / Article-candidate exemplars (2026 dwell-time sweet spot).
     pub fn query_discovered_posts(
         &self,
         topic: Option<&str>,
         author: Option<&str>,
         min_likes: Option<i64>,
+        min_chars: Option<i64>,
         limit: usize,
     ) -> Result<Vec<DiscoveredPostRow>, rusqlite::Error> {
         let mut sql = String::from(
@@ -752,6 +755,10 @@ impl IntelStore {
             sql.push_str(&format!(" AND like_count >= ?{param_idx}"));
             let idx = param_idx; param_idx += 1; Some(idx)
         } else { None };
+        let chars_idx = if min_chars.is_some() {
+            sql.push_str(&format!(" AND length(text) >= ?{param_idx}"));
+            let idx = param_idx; param_idx += 1; Some(idx)
+        } else { None };
         sql.push_str(&format!(" ORDER BY COALESCE(impression_count,0) DESC LIMIT ?{param_idx}"));
 
         let mut stmt = self.conn.prepare(&sql)?;
@@ -759,6 +766,7 @@ impl IntelStore {
         if let Some(_) = topic_idx { stmt.raw_bind_parameter(bind_idx, topic.unwrap())?; bind_idx += 1; }
         if let Some(_) = author_idx { stmt.raw_bind_parameter(bind_idx, author.unwrap())?; bind_idx += 1; }
         if let Some(_) = likes_idx { stmt.raw_bind_parameter(bind_idx, min_likes.unwrap())?; bind_idx += 1; }
+        if let Some(_) = chars_idx { stmt.raw_bind_parameter(bind_idx, min_chars.unwrap())?; bind_idx += 1; }
         stmt.raw_bind_parameter(bind_idx, limit as i64)?;
 
         let mut rows = Vec::new();
@@ -1713,18 +1721,24 @@ mod tests {
         assert_eq!(first, "search");
 
         // Query: by topic
-        let results = store.query_discovered_posts(Some("longevity"), None, None, 10).unwrap();
+        let results = store.query_discovered_posts(Some("longevity"), None, None, None, 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].tweet_id, "dp_123");
 
         // Query: by min_likes
-        let results = store.query_discovered_posts(None, None, Some(100), 10).unwrap();
+        let results = store.query_discovered_posts(None, None, Some(100), None, 10).unwrap();
         assert_eq!(results.len(), 0); // 42 < 100
-        let results = store.query_discovered_posts(None, None, Some(10), 10).unwrap();
+        let results = store.query_discovered_posts(None, None, Some(10), None, 10).unwrap();
         assert_eq!(results.len(), 1);
 
         // Query: by author
-        let results = store.query_discovered_posts(None, Some("testuser"), None, 10).unwrap();
+        let results = store.query_discovered_posts(None, Some("testuser"), None, None, 10).unwrap();
+        assert_eq!(results.len(), 1);
+
+        // Query: by min_chars (long-form filter). Test post text is short; it should be excluded.
+        let results = store.query_discovered_posts(None, None, None, Some(500), 10).unwrap();
+        assert_eq!(results.len(), 0);
+        let results = store.query_discovered_posts(None, None, None, Some(1), 10).unwrap();
         assert_eq!(results.len(), 1);
     }
 

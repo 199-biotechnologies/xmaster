@@ -61,6 +61,7 @@ pub async fn execute(
     topic: Option<&str>,
     author: Option<&str>,
     min_likes: Option<i64>,
+    min_chars: Option<i64>,
     count: usize,
 ) -> Result<(), XmasterError> {
     let store = IntelStore::open()
@@ -69,12 +70,14 @@ pub async fn execute(
     let library_size = store.discovered_posts_count()
         .map_err(|e| XmasterError::Config(format!("DB error: {e}")))?;
 
-    let rows = store.query_discovered_posts(topic, author, min_likes, count)
+    let rows = store.query_discovered_posts(topic, author, min_likes, min_chars, count)
         .map_err(|e| XmasterError::Config(format!("Query error: {e}")))?;
 
     if rows.is_empty() {
         let hint = if library_size == 0 {
             "Library is empty. Run `xmaster search`, `xmaster timeline`, or `xmaster read` to start building it."
+        } else if min_chars.is_some() {
+            "No long-form posts in the library yet. Run `xmaster search-ai` on accounts that publish Articles or long notes (e.g. @beaverd, @KobeissiLetter, @thedankoe) to seed the corpus."
         } else {
             "No posts match your filters. Try broader criteria or omit --min-likes."
         };

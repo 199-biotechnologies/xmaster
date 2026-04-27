@@ -364,7 +364,10 @@ pub enum Commands {
         reply_to: Option<String>,
     },
 
-    /// Browse your discovered posts library for content inspiration
+    /// Browse your discovered posts library for content inspiration.
+    /// Use --long to surface long-form / Article-candidate exemplars (>=500 chars,
+    /// 2026 dwell-time sweet spot — see `agent-info` for the X $1M Article Contest
+    /// winners and the writing patterns that drove their reach).
     Inspire {
         /// Filter by topic (searches post text)
         #[arg(long)]
@@ -375,6 +378,12 @@ pub enum Commands {
         /// Minimum like count
         #[arg(long)]
         min_likes: Option<i64>,
+        /// Minimum character count (for surfacing long-form examples)
+        #[arg(long)]
+        min_chars: Option<i64>,
+        /// Shortcut for --min-chars 500 (long-form / Article-candidate band)
+        #[arg(long, default_value = "false")]
+        long: bool,
         /// Number of results
         #[arg(long, alias = "limit", default_value = "20")]
         count: usize,

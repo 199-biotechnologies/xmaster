@@ -306,8 +306,11 @@ pub async fn dispatch(
         Commands::Mute { username } => moderation::mute(ctx, format, username).await,
         Commands::Unmute { username } => moderation::unmute(ctx, format, username).await,
         Commands::Analyze { text, goal, reply_to } => analyze::execute(ctx, format, text, goal.as_deref(), reply_to.as_deref()).await,
-        Commands::Inspire { topic, author, min_likes, count } =>
-            inspire::execute(ctx, format, topic.as_deref(), author.as_deref(), *min_likes, *count).await,
+        Commands::Inspire { topic, author, min_likes, min_chars, long, count } => {
+            // --long is sugar for --min-chars 500. Explicit --min-chars wins if both passed.
+            let mc = min_chars.or(if *long { Some(500) } else { None });
+            inspire::execute(ctx, format, topic.as_deref(), author.as_deref(), *min_likes, mc, *count).await
+        },
         Commands::Track { action } => match action {
             TrackCommands::Run => track::track_run(ctx, format).await,
             TrackCommands::Status => track::track_status(ctx, format).await,

@@ -464,6 +464,96 @@ pub fn analyze(text: &str, ctx: &AnalyzeContext) -> PreflightResult {
         }
     }
 
+    // --- Long-form (note tweet / Article candidate) heuristics ---
+    // Triggered above 500 chars. Single long-form posts now get a distribution
+    // edge over multi-tweet threads (algo doc 06 §7, OpenTweet 2026), and X is
+    // actively boosting Articles (Jan 2026 $1M Article Contest, won by data-dense
+    // investigative pieces — @beaverd, @KobeissiLetter, @thedankoe). The dwell
+    // band of 500–2000 chars is the empirical sweet spot.
+    if features.char_count > 500 {
+        // a) Sweet-spot reward (500–2000 chars).
+        if features.char_count <= 2000 {
+            score += 5;
+        }
+        // b) Beyond optimal note-tweet band — suggest splitting or publishing as Article.
+        if features.char_count > 2000 && features.char_count <= 5000 {
+            issues.push(Issue {
+                severity: Severity::Info,
+                code: "long_form_above_band".into(),
+                message: format!(
+                    "{} chars — past the 500–2000 dwell sweet spot. Still works as a note tweet, but consider publishing as an Article (boosted in 2026, won the $1M contest)",
+                    features.char_count
+                ),
+                fix: Some("Trim to <=2000 chars, or publish via the Articles feature for the boost + cover image preview-card".into()),
+            });
+        }
+        if features.char_count > 5000 {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                code: "long_form_too_long".into(),
+                message: format!(
+                    "{} chars — beyond optimal dwell band; readers drop off and the note-tweet preview truncates",
+                    features.char_count
+                ),
+                fix: Some("Split into 2 long-form posts 2h apart, or publish as a native Article (Premium feature, currently boosted)".into()),
+            });
+            score -= 10;
+        }
+
+        // c) Preview-card hook check — only the first 280 chars surface in the
+        //    feed before the "show more" cut. Re-run weak-opener detection on
+        //    that slice so a strong long-form body isn't undone by a flat lead.
+        let preview_end = trimmed.char_indices().nth(280).map(|(i, _)| i).unwrap_or(trimmed.len());
+        let preview = &trimmed[..preview_end];
+        let preview_first_line = preview.lines().next().unwrap_or("");
+        if !preview_first_line.is_empty()
+            && weak_openers.iter().any(|w| preview_first_line.starts_with(w))
+            // Only flag if the short-post hook check above didn't already fire
+            && !issues.iter().any(|i| i.code == "weak_hook")
+        {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                code: "long_form_weak_preview".into(),
+                message: "Long-form preview (first 280 chars) opens weakly — that's all the feed shows before 'show more'".into(),
+                fix: Some("Lead with a number, a contrarian claim, or a named subject. Save soft setup for paragraph 2".into()),
+            });
+            score -= 10;
+        }
+
+        // d) Scannability — long-form without paragraph breaks is a wall-of-text.
+        //    Aim for >=1 line break per ~400 chars (rough density check).
+        let breaks = trimmed.matches("\n\n").count() + trimmed.matches('\n').count();
+        let needed_breaks = features.char_count / 400;
+        if breaks < needed_breaks.max(2) {
+            issues.push(Issue {
+                severity: Severity::Warning,
+                code: "long_form_wall_of_text".into(),
+                message: format!(
+                    "Wall of text — {} chars with only {} line breaks. Long-form on X is scanned, not read; people bounce on dense paragraphs",
+                    features.char_count, breaks
+                ),
+                fix: Some("Break into short paragraphs (2-4 lines each), use bullet/number lists for enumeration, blank line between sections".into()),
+            });
+            score -= 10;
+        }
+
+        // e) Payoff density — for long-form, low specificity is more punishing.
+        //    Demand at least one number per 500 chars OR at least 2 proper nouns.
+        let has_proper = has_proper_nouns(trimmed);
+        let number_count = trimmed.split_whitespace()
+            .filter(|w| w.chars().any(|c| c.is_ascii_digit()))
+            .count();
+        if number_count < (features.char_count / 500).max(1) && !has_proper {
+            issues.push(Issue {
+                severity: Severity::Info,
+                code: "long_form_low_density".into(),
+                message: "Long-form needs payoff density — concrete numbers, named subjects, or specific evidence. Without them readers feel padded out".into(),
+                fix: Some("Add stats, dates, $ amounts, or named people/companies. The 2026 contest winners were data-dense investigations, not reflective essays".into()),
+            });
+            score -= 5;
+        }
+    }
+
     // --- Sentiment check ---
     if features.sentiment == "negative" {
         issues.push(Issue {
