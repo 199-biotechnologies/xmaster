@@ -21,6 +21,7 @@ pub mod suggest;
 pub mod schedule;
 pub mod bookmarks_cmd;
 pub mod engage_recommend;
+pub mod engage_inbox;
 pub mod skill_cmd;
 pub mod replies;
 pub mod read_post;
@@ -260,6 +261,9 @@ pub async fn dispatch(
             Ok(())
         }
         Commands::Engage { action } => match action {
+            EngageCommands::Inbox { id, count, quote_reply_count } => {
+                engage_inbox::execute(ctx, format, id, *count, *quote_reply_count).await
+            }
             EngageCommands::Recommend { topic, min_followers, count } => {
                 engage_recommend::recommend(ctx, format, topic.as_deref(), *min_followers, *count).await
             }

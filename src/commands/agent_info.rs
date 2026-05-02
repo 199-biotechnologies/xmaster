@@ -165,7 +165,7 @@ pub fn execute(format: OutputFormat) {
             "lists remove".into(), "lists timeline".into(), "lists members".into(),
             "lists mine".into(),
             // Intelligence
-            "analyze".into(), "engage recommend".into(), "engage feed".into(),
+            "analyze".into(), "engage inbox".into(), "engage recommend".into(), "engage feed".into(),
             "engage swarm".into(), "engage hot-targets".into(),
             "engage watchlist add".into(), "engage watchlist list".into(), "engage watchlist remove".into(),
             "likers".into(), "retweeters".into(), "quotes".into(), "users".into(),
@@ -194,6 +194,7 @@ pub fn execute(format: OutputFormat) {
             "scheduling".into(),
             "bookmark_intelligence".into(),
             "engagement_intelligence".into(),
+            "conversation_inbox".into(),
             "article_preview".into(),
             "article_draft".into(),
             "self_update".into(),
@@ -276,7 +277,7 @@ pub fn execute(format: OutputFormat) {
         usage_hints: vec![
             "Always run 'xmaster analyze' before posting — it checks for common issues that hurt reach".into(),
             "Use 'xmaster search-ai' over 'xmaster search' — cheaper and smarter (xAI vs X API). Supports from:username for hard author filtering (e.g. 'xmaster search-ai \"from:elonmusk AI\"')".into(),
-            "Reply to larger accounts in your niche — and REPLY BACK when people reply to you. reply_engaged_by_author (+75) is the single highest algorithmic signal, ~150x a like".into(),
+            "Reply to larger accounts in your niche — and REPLY BACK when people reply to you. Historical Twitter open-model weights put reply_engaged_by_author at 75.0 vs likes at 0.5 (~150x), but live X weights can differ, so treat this as a prioritization heuristic".into(),
             "Create content people want to DM to friends — share_via_dm is one of the top scoring signals in weighted_scorer.rs".into(),
             "Never put external links in the main tweet body — non-Premium gets near-zero reach, Premium loses 30-50%. Links go in the first reply".into(),
             "Space posts 2+ hours apart — author_diversity_scorer.rs applies exponential decay for repeated authors per feed session. The algorithm only shows your top 2-3 posts; extra posts dilute your average without adding reach".into(),
@@ -314,6 +315,7 @@ pub fn execute(format: OutputFormat) {
             "'xmaster track run' also surfaces CROSS-POST CANDIDATES — standalone posts that crossed 5k impressions in the last 14d. Check 'cross_post_candidates' in track-run metadata. Pattern from @jackmoses777 (Apr 2026): screenshot a high-perf X text post, upload to Instagram as a still. 198K X views → 325K IG views / 8K followers in one case. Use the clinstagram skill to automate the upload".into(),
             "'xmaster engage hot-targets --days 7 --json' ranks the accounts you've replied to by avg impressions, profile clicks, and reply-back rate. Use it to find which targets reward your reply effort the most, then prioritise re-engaging them".into(),
             "Use 'xmaster likers <id>' / 'xmaster retweeters <id>' / 'xmaster quotes <id>' to inspect who engaged with a specific post — each returns a clean user/tweet list. 'quotes' also caches the quote tweets into your discovered_posts library for later 'xmaster inspire' browsing".into(),
+            "Use 'xmaster engage inbox <id>' after publishing or when a post is moving. It checks root replies, quote tweets, and replies under quote tweets in one pass, then ranks where an author reply-back is likely to matter most. This catches the 'comments in reposts' surface that plain metrics/replies checks miss".into(),
             "Batch-lookup many users at once with 'xmaster users alice bob carol' — one HTTP call for up to 100 usernames. Use this whenever you need to hydrate a list of accounts; never loop per-user".into(),
             "'xmaster lists members <list_id>' returns the users in a given list (max 100 per call). Useful for auditing community membership or extracting target sets from curated lists".into(),
             "'xmaster amplifiers' shows who reposts your content. High-frequency reposters are your audience amplifiers — add them to your watchlist to nurture the relationship".into(),
@@ -325,10 +327,11 @@ pub fn execute(format: OutputFormat) {
                 // track run FIRST — batch-snapshots all your recent posts + checks reply-backs.
                 // metrics <id> is the fallback for spot-checking one specific tweet.
                 next_commands: vec![
+                    "xmaster engage inbox <id>".into(),
                     "xmaster track run".into(),
                     "xmaster metrics <id>".into(),
                 ],
-                reason: "Batch-snapshot recent posts and catch reply-backs in one command. Use metrics <id> only for a deep dive on one specific tweet".into(),
+                reason: "Check the conversation inbox first when a post is moving, then batch-snapshot recent posts. Use metrics <id> only for a deep dive on one specific tweet".into(),
             },
             Handoff {
                 after_command: "reply".into(),
@@ -342,10 +345,11 @@ pub fn execute(format: OutputFormat) {
                 after_command: "metrics".into(),
                 // Hint agents to batch next time: if they want to check more posts, use one call.
                 next_commands: vec![
+                    "xmaster engage inbox <id>".into(),
                     "xmaster metrics ID1 ID2 ID3 ...".into(),
                     "xmaster track run".into(),
                 ],
-                reason: "metrics accepts multiple IDs in one call — never loop per-id. For auditing recent activity, track run is faster still".into(),
+                reason: "If engagement is moving, inspect replies/quotes/quote-comments with engage inbox. For more post metrics, batch IDs in one metrics call".into(),
             },
             Handoff {
                 after_command: "analyze".into(),

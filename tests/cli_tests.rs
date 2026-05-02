@@ -162,6 +162,27 @@ fn config_subcommands_parse() {
 }
 
 #[test]
+fn engage_inbox_subcommand_parses() {
+    xmaster()
+        .args(["engage", "--help"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("inbox"))
+        .stdout(predicate::str::contains("quote"));
+}
+
+#[test]
+fn engage_inbox_without_auth_fails_gracefully() {
+    xmaster()
+        .env("XMASTER_CONFIG_DIR", "/tmp/xmaster-test-nonexistent")
+        .args(["engage", "inbox", "12345", "--json"])
+        .assert()
+        .failure()
+        .code(3)
+        .stderr(predicate::str::contains("auth_missing"));
+}
+
+#[test]
 fn unknown_command_fails() {
     xmaster()
         .arg("nonexistent")

@@ -501,6 +501,17 @@ pub enum ArticleCommands {
 
 #[derive(Subcommand)]
 pub enum EngageCommands {
+    /// Audit a post's conversation inbox: replies, quote tweets, and comments under quotes
+    Inbox {
+        /// Tweet ID or URL of your post
+        id: String,
+        /// Max direct replies and quote tweets to fetch
+        #[arg(long, short, alias = "limit", default_value = "20")]
+        count: usize,
+        /// Max replies to inspect under each quote tweet (0 disables quote-comment scan)
+        #[arg(long, default_value = "5")]
+        quote_reply_count: usize,
+    },
     /// Find high-ROI reply targets in your niche
     Recommend {
         /// Topic to discover targets (uses AI search)
